@@ -146,7 +146,7 @@ upa-np/
 │   ├── use-network.ts          # Network status hook
 │   └── use-toast.ts            # Toast notification hook
 ├── types/                      # TypeScript type definitions
-├── capacitor.config.ts         # Capacitor configuration
+
 ├── next.config.mjs
 ├── tailwind.config.ts
 ├── package.json
