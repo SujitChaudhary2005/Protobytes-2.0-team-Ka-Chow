@@ -4,22 +4,47 @@
 
 // === QR Payload Types (The Innovation) ===
 
-interface BaseQRPayload {
+// Static QR — generated once, reused forever
+// Contains only the intent definition, not payer details
+export interface StaticQRPayload {
   version: "1.0";
   upa: string;              // "traffic@nepal.gov"
+  entity_name: string;      // "Nepal Traffic Police"
   intent: {
     id: string;             // "traffic_fine"
     category: string;       // "fine"
     label: string;          // "Traffic Violation Fine"
+  };
+  amount_type: "fixed" | "range" | "open";
+  amount?: number;          // fixed amount (if fixed)
+  min_amount?: number;      // if range
+  max_amount?: number;      // if range
+  currency: "NPR";
+  metadata_schema: Record<string, { type: string; label: string; required: boolean }>;
+}
+
+// Full transaction payload — built at payment time by the citizen app
+interface BaseQRPayload {
+  version: "1.0";
+  upa: string;
+  intent: {
+    id: string;
+    category: string;
+    label: string;
   };
   amount: number;
   currency: "NPR";
   metadata: Record<string, string>;
   payer_name: string;
   payer_id: string;
-  issuedAt: string;         // ISO timestamp
-  expiresAt: string;        // ISO timestamp (1 hour)
-  nonce: string;            // UUID-like (prevents replay)
+  issuedAt: string;
+  expiresAt: string;
+  nonce: string;
+  geofence?: {
+    lat: number;
+    lng: number;
+    radiusMeters: number;
+  };
 }
 
 export interface OnlineQRPayload extends BaseQRPayload {
