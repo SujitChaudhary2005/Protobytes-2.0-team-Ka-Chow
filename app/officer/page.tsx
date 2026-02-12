@@ -1,14 +1,27 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { QRCodeDisplay } from "@/components/qr-code";
-import { generateKeyPair, signPayload, generateNonce, keyToHex } from "@/lib/crypto";
 import { toast } from "sonner";
-import { QrCode, Download, Wifi, WifiOff, Copy, Check } from "lucide-react";
+import { formatCurrency, formatDate } from "@/lib/utils";
+import { Transaction } from "@/types";
+import {
+    QrCode,
+    Download,
+    Copy,
+    Check,
+    RefreshCw,
+    CheckCircle2,
+    Clock,
+    XCircle,
+    Wifi,
+    WifiOff,
+    TrendingUp,
+    Users,
+} from "lucide-react";
 import {
     Select,
     SelectContent,
@@ -16,21 +29,19 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import type { UPA, IntentTemplate, OnlineQRPayload, OfflineQRPayload } from "@/types";
+import type { UPA, StaticQRPayload } from "@/types";
 
 export default function OfficerPage() {
-
-    const [loading, setLoading] = useState(false);
     const [upas, setUpas] = useState<UPA[]>([]);
     const [selectedUpa, setSelectedUpa] = useState<UPA | null>(null);
-    const [selectedIntent, setSelectedIntent] = useState<IntentTemplate | null>(null);
+    const [selectedIntentCode, setSelectedIntentCode] = useState<string>("");
     const [qrData, setQrData] = useState<string | null>(null);
-    const [qrMode, setQrMode] = useState<"online" | "offline">("online");
-    const [amount, setAmount] = useState("");
-    const [payerName, setPayerName] = useState("");
-    const [payerId, setPayerId] = useState("");
-    const [metadata, setMetadata] = useState<Record<string, string>>({});
     const [copied, setCopied] = useState(false);
+    const [transactions, setTransactions] = useState<Transaction[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState<"qr" | "collections">("qr");
+
+    const selectedIntent = selectedUpa?.intents.find((i) => i.intent_code === selectedIntentCode) || null;
 
     useEffect(() => {
         fetch("/api/upas")
@@ -40,115 +51,82 @@ export default function OfficerPage() {
                 if (res.data?.[0]) {
                     setSelectedUpa(res.data[0]);
                     if (res.data[0].intents?.[0]) {
-                        handleIntentSelect(res.data[0].intents[0]);
+                        setSelectedIntentCode(res.data[0].intents[0].intent_code);
                     }
                 }
             })
             .catch(console.error);
     }, []);
 
+    const loadTransactions = useCallback(async () => {
+        try {
+            const res = await fetch("/api/transactions");
+            if (res.ok) {
+                const result = await res.json();
+                if (result.data && Array.isArray(result.data)) {
+                    setTransactions(result.data.map((tx: any) => ({
+                        id: tx.id,
+                        tx_id: tx.tx_id,
+                        recipient: tx.upa_address || tx.recipient || tx.upa_id || "",
+                        recipientName: tx.entity_name || tx.recipientName || "",
+                        amount: tx.amount,
+                        intent: tx.intent_label || tx.intent || "",
+                        intentCategory: tx.intent_category || tx.intentCategory || "",
+                        metadata: tx.metadata || {},
+                        status: tx.status,
+                        mode: tx.mode || "online",
+                        nonce: tx.nonce,
+                        timestamp: new Date(tx.issued_at || tx.created_at || tx.timestamp || Date.now()).getTime(),
+                        settledAt: tx.settled_at ? new Date(tx.settled_at).getTime() : undefined,
+                        walletProvider: tx.wallet_provider,
+                    })));
+                    return;
+                }
+            }
+        } catch { /* ignore */ }
+        try {
+            const stored = localStorage.getItem("upa_transactions");
+            if (stored) setTransactions(JSON.parse(stored));
+        } catch { /* ignore */ }
+    }, []);
+
+    useEffect(() => {
+        const load = async () => { setLoading(true); await loadTransactions(); setLoading(false); };
+        load();
+        const interval = setInterval(loadTransactions, 5000);
+        return () => clearInterval(interval);
+    }, [loadTransactions]);
+
     const handleUpaSelect = (address: string) => {
         const upa = upas.find((u) => u.address === address);
         if (upa) {
             setSelectedUpa(upa);
-            setSelectedIntent(null);
-            setMetadata({});
-            setAmount("");
-            if (upa.intents?.[0]) handleIntentSelect(upa.intents[0]);
+            setSelectedIntentCode(upa.intents?.[0]?.intent_code || "");
+            setQrData(null);
         }
-    };
-
-    const handleIntentSelect = (intent: IntentTemplate) => {
-        setSelectedIntent(intent);
-        if (intent.amount_type === "fixed" && intent.fixed_amount) {
-            setAmount(String(intent.fixed_amount));
-        } else {
-            setAmount("");
-        }
-        const newMetadata: Record<string, string> = {};
-        if (intent.metadata_schema) {
-            Object.keys(intent.metadata_schema).forEach((key) => {
-                newMetadata[key] = "";
-            });
-        }
-        setMetadata(newMetadata);
     };
 
     const handleGenerateQR = () => {
         if (!selectedUpa || !selectedIntent) {
-            toast.error("Missing Selection", { description: "Please select a UPA and intent" });
+            toast.error("Missing Selection", { description: "Please select an entity and payment type" });
             return;
         }
-        if (!amount || parseFloat(amount) <= 0) {
-            toast.error("Invalid Amount", { description: "Please enter a valid amount" });
-            return;
+        const payload: StaticQRPayload = {
+            version: "1.0",
+            upa: selectedUpa.address,
+            entity_name: selectedUpa.entity_name,
+            intent: { id: selectedIntent.intent_code, category: selectedIntent.category, label: selectedIntent.label },
+            amount_type: selectedIntent.amount_type,
+            currency: "NPR",
+            metadata_schema: selectedIntent.metadata_schema || {},
+        };
+        if (selectedIntent.amount_type === "fixed") payload.amount = selectedIntent.fixed_amount!;
+        else if (selectedIntent.amount_type === "range") {
+            payload.min_amount = selectedIntent.min_amount!;
+            payload.max_amount = selectedIntent.max_amount!;
         }
-        if (!payerName || !payerId) {
-            toast.error("Missing Payer Info", { description: "Please enter payer name and ID" });
-            return;
-        }
-
-        if (selectedIntent.amount_type === "range") {
-            const amt = parseFloat(amount);
-            if (selectedIntent.min_amount && amt < selectedIntent.min_amount) {
-                toast.error("Amount Too Low", { description: `Minimum: NPR ${selectedIntent.min_amount}` });
-                return;
-            }
-            if (selectedIntent.max_amount && amt > selectedIntent.max_amount) {
-                toast.error("Amount Too High", { description: `Maximum: NPR ${selectedIntent.max_amount}` });
-                return;
-            }
-        }
-
-        setLoading(true);
-        try {
-            const nonce = generateNonce();
-            const now = new Date();
-            const expiresAt = new Date(now.getTime() + 60 * 60 * 1000);
-
-            const basePayload: OnlineQRPayload = {
-                version: "1.0",
-                type: "online",
-                upa: selectedUpa.address,
-                intent: {
-                    id: selectedIntent.intent_code,
-                    category: selectedIntent.category,
-                    label: selectedIntent.label,
-                },
-                amount: parseFloat(amount),
-                currency: "NPR",
-                metadata: { ...metadata, payerName, payerId },
-                payer_name: payerName,
-                payer_id: payerId,
-                issuedAt: now.toISOString(),
-                expiresAt: expiresAt.toISOString(),
-                nonce,
-            };
-
-            let finalPayload: OnlineQRPayload | OfflineQRPayload;
-
-            if (qrMode === "offline") {
-                const { publicKey, privateKey } = generateKeyPair();
-                const signature = signPayload(basePayload, privateKey);
-                finalPayload = {
-                    ...basePayload,
-                    type: "offline",
-                    signature,
-                    publicKey: keyToHex(publicKey),
-                } as OfflineQRPayload;
-            } else {
-                finalPayload = basePayload;
-            }
-
-            setQrData(JSON.stringify(finalPayload));
-            toast.success("QR Code Generated", {
-                description: `${qrMode === "offline" ? "Signed offline" : "Online"} payment request ready`,
-            });
-        } catch (err: any) {
-            toast.error("Generation Failed", { description: err.message });
-        } finally {
-            setLoading(false);
-        }
+        setQrData(JSON.stringify(payload));
+        toast.success("QR Code Generated");
     };
 
     const handleCopyQR = async () => {
@@ -156,7 +134,7 @@ export default function OfficerPage() {
             await navigator.clipboard.writeText(qrData);
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
-            toast.success("Copied!", { description: "QR payload copied to clipboard" });
+            toast.success("Copied!");
         }
     };
 
@@ -164,67 +142,88 @@ export default function OfficerPage() {
         const canvas = document.querySelector("#qr-canvas canvas") as HTMLCanvasElement;
         if (canvas) {
             const link = document.createElement("a");
-            link.download = `UPA-QR-${selectedIntent?.intent_code || "payment"}.png`;
+            link.download = `UPA-QR-${selectedUpa?.address}-${selectedIntent?.intent_code}.png`;
             link.href = canvas.toDataURL("image/png");
             link.click();
-            toast.success("Downloaded", { description: "QR code saved as PNG" });
+            toast.success("Downloaded");
         }
     };
 
+    // Stats for this officer's entity
+    const entityTx = selectedUpa
+        ? transactions.filter((tx) => tx.recipient === selectedUpa.address || tx.recipientName === selectedUpa.entity_name)
+        : transactions;
+    const stats = {
+        total: entityTx.length,
+        settled: entityTx.filter((t) => t.status === "settled").length,
+        queued: entityTx.filter((t) => t.status === "queued" || t.status === "pending").length,
+        totalCollected: entityTx.filter((t) => t.status === "settled").reduce((s, t) => s + t.amount, 0),
+        todayCount: entityTx.filter((t) => {
+            const d = new Date(t.timestamp);
+            const now = new Date();
+            return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        }).length,
+        onlineCount: entityTx.filter((t) => t.mode === "online").length,
+        offlineCount: entityTx.filter((t) => t.mode === "offline").length,
+    };
+
     return (
-        <div className="p-4 md:p-6">
-            <div className="mb-6">
+        <div className="p-4 md:p-6 space-y-6">
+            <div>
                 <h2 className="text-2xl font-semibold">Officer Portal</h2>
-                <p className="text-sm text-muted-foreground">Generate intent-locked payment QR codes</p>
+                <p className="text-sm text-muted-foreground">
+                    {selectedUpa?.entity_name || "Government Payment Collection"}
+                </p>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-2">
-                {/* Form */}
-                <div className="space-y-6">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle className="text-base">Payment Request</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            {/* QR Mode Toggle */}
-                            <div className="space-y-2">
-                                <Label>QR Mode</Label>
-                                <div className="flex gap-2">
-                                    <Button
-                                        type="button"
-                                        variant={qrMode === "online" ? "default" : "outline"}
-                                        className="flex-1"
-                                        onClick={() => setQrMode("online")}
-                                        size="sm"
-                                    >
-                                        <Wifi className="h-4 w-4 mr-1.5" />
-                                        Online
-                                    </Button>
-                                    <Button
-                                        type="button"
-                                        variant={qrMode === "offline" ? "default" : "outline"}
-                                        className="flex-1"
-                                        onClick={() => setQrMode("offline")}
-                                        size="sm"
-                                    >
-                                        <WifiOff className="h-4 w-4 mr-1.5" />
-                                        Offline
-                                    </Button>
-                                </div>
-                                {qrMode === "offline" && (
-                                    <p className="text-xs text-accent font-medium">
-                                        Ed25519 signature will be embedded
-                                    </p>
-                                )}
-                            </div>
+            {/* Stats Row */}
+            <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+                <Card>
+                    <CardContent className="p-4">
+                        <p className="text-xs text-muted-foreground mb-1">Collected</p>
+                        <p className="text-xl font-bold">{formatCurrency(stats.totalCollected)}</p>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="p-4">
+                        <p className="text-xs text-muted-foreground mb-1">Today</p>
+                        <p className="text-xl font-bold">{stats.todayCount} <span className="text-sm font-normal text-muted-foreground">payments</span></p>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="p-4">
+                        <p className="text-xs text-muted-foreground mb-1">Settled</p>
+                        <p className="text-xl font-bold text-success">{stats.settled}</p>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="p-4">
+                        <p className="text-xs text-muted-foreground mb-1">Queued</p>
+                        <p className="text-xl font-bold text-warning">{stats.queued}</p>
+                    </CardContent>
+                </Card>
+            </div>
 
-                            {/* UPA Address */}
+            {/* Tab Switcher */}
+            <div className="flex gap-2">
+                <Button variant={activeTab === "qr" ? "default" : "outline"} size="sm" onClick={() => setActiveTab("qr")}>
+                    <QrCode className="h-4 w-4 mr-1.5" /> Generate QR
+                </Button>
+                <Button variant={activeTab === "collections" ? "default" : "outline"} size="sm" onClick={() => setActiveTab("collections")}>
+                    <TrendingUp className="h-4 w-4 mr-1.5" /> Collections
+                </Button>
+            </div>
+
+            {activeTab === "qr" ? (
+                <div className="grid gap-6 md:grid-cols-2">
+                    {/* QR Form */}
+                    <Card>
+                        <CardHeader><CardTitle className="text-base">Create Payment QR</CardTitle></CardHeader>
+                        <CardContent className="space-y-4">
                             <div className="space-y-2">
-                                <Label>UPA Address</Label>
+                                <Label>Government Entity</Label>
                                 <Select value={selectedUpa?.address || ""} onValueChange={handleUpaSelect}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select UPA" />
-                                    </SelectTrigger>
+                                    <SelectTrigger><SelectValue placeholder="Select entity" /></SelectTrigger>
                                     <SelectContent>
                                         {upas.map((upa) => (
                                             <SelectItem key={upa.address} value={upa.address}>
@@ -234,118 +233,65 @@ export default function OfficerPage() {
                                     </SelectContent>
                                 </Select>
                             </div>
-
-                            {/* Intent Type */}
                             <div className="space-y-2">
-                                <Label>Intent Type</Label>
-                                <Select
-                                    value={selectedIntent?.intent_code || ""}
-                                    onValueChange={(code) => {
-                                        const intent = selectedUpa?.intents.find((i) => i.intent_code === code);
-                                        if (intent) handleIntentSelect(intent);
-                                    }}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select Intent" />
-                                    </SelectTrigger>
+                                <Label>Payment Type</Label>
+                                <Select value={selectedIntentCode} onValueChange={(c) => { setSelectedIntentCode(c); setQrData(null); }}>
+                                    <SelectTrigger><SelectValue placeholder="Select payment type" /></SelectTrigger>
                                     <SelectContent>
-                                        {(selectedUpa?.intents || []).map((intent) => (
-                                            <SelectItem key={intent.intent_code} value={intent.intent_code}>
-                                                {intent.label} ({intent.category})
-                                            </SelectItem>
+                                        {(selectedUpa?.intents || []).map((i) => (
+                                            <SelectItem key={i.intent_code} value={i.intent_code}>{i.label}</SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
                             </div>
-
-                            {/* Amount */}
-                            <div className="space-y-2">
-                                <Label>Amount (NPR)</Label>
-                                <Input
-                                    type="number"
-                                    value={amount}
-                                    onChange={(e) => setAmount(e.target.value)}
-                                    placeholder={
-                                        selectedIntent?.amount_type === "fixed"
-                                            ? String(selectedIntent.fixed_amount)
-                                            : selectedIntent?.min_amount
-                                            ? `${selectedIntent.min_amount} - ${selectedIntent.max_amount}`
-                                            : "Enter amount"
-                                    }
-                                    disabled={selectedIntent?.amount_type === "fixed"}
-                                />
-                                {selectedIntent?.amount_type === "range" && (
-                                    <p className="text-xs text-muted-foreground">
-                                        Range: NPR {selectedIntent.min_amount} - {selectedIntent.max_amount}
-                                    </p>
-                                )}
-                            </div>
-
-                            {/* Payer Info */}
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="space-y-2">
-                                    <Label>Payer Name</Label>
-                                    <Input value={payerName} onChange={(e) => setPayerName(e.target.value)} placeholder="Ram Thapa" />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Payer ID</Label>
-                                    <Input value={payerId} onChange={(e) => setPayerId(e.target.value)} placeholder="License #" />
-                                </div>
-                            </div>
-
-                            {/* Dynamic Metadata Fields */}
-                            {selectedIntent?.metadata_schema && Object.keys(selectedIntent.metadata_schema).length > 0 && (
-                                <div className="space-y-3 pt-3 border-t">
-                                    <Label className="text-xs font-semibold text-primary uppercase tracking-wider">
-                                        Intent-Specific Fields
-                                    </Label>
-                                    {Object.entries(selectedIntent.metadata_schema).map(([key, field]) => (
-                                        <div key={key} className="space-y-1">
-                                            <Label className="text-sm">
-                                                {field.label}
-                                                {field.required && <span className="text-danger ml-1">*</span>}
-                                            </Label>
-                                            <Input
-                                                value={metadata[key] || ""}
-                                                onChange={(e) => setMetadata({ ...metadata, [key]: e.target.value })}
-                                                placeholder={field.label}
-                                            />
-                                        </div>
-                                    ))}
+                            {selectedIntent && (
+                                <div className="rounded-lg border bg-muted/30 p-3">
+                                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Amount</p>
+                                    {selectedIntent.amount_type === "fixed" ? (
+                                        <p className="text-lg font-semibold">NPR {selectedIntent.fixed_amount?.toLocaleString()}</p>
+                                    ) : selectedIntent.amount_type === "range" ? (
+                                        <p className="text-lg font-semibold">NPR {selectedIntent.min_amount?.toLocaleString()} – {selectedIntent.max_amount?.toLocaleString()}</p>
+                                    ) : (
+                                        <p className="text-lg font-semibold text-muted-foreground">Citizen enters amount</p>
+                                    )}
                                 </div>
                             )}
-
-                            <Button className="w-full" onClick={handleGenerateQR} disabled={loading}>
-                                <QrCode className="h-4 w-4 mr-2" />
-                                {loading ? "Generating..." : `Generate ${qrMode === "offline" ? "Signed " : ""}QR Code`}
+                            {selectedIntent?.metadata_schema && Object.keys(selectedIntent.metadata_schema).length > 0 && (
+                                <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Citizen fills in</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {Object.entries(selectedIntent.metadata_schema).map(([key, field]) => (
+                                            <span key={key} className="text-xs bg-background border rounded-md px-2 py-1">{field.label}{field.required && " *"}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            <Button className="w-full" onClick={handleGenerateQR}>
+                                <QrCode className="h-4 w-4 mr-2" /> Generate QR Code
                             </Button>
                         </CardContent>
                     </Card>
-                </div>
 
-                {/* QR Display */}
-                <div>
+                    {/* QR Display */}
                     <Card>
-                        <CardHeader>
-                            <CardTitle className="text-base">Payment QR Code</CardTitle>
-                        </CardHeader>
+                        <CardHeader><CardTitle className="text-base">Payment QR Code</CardTitle></CardHeader>
                         <CardContent>
                             {qrData ? (
                                 <div className="space-y-4">
-                                    <div id="qr-canvas" className="flex justify-center p-4 bg-white rounded-lg border">
+                                    <div id="qr-canvas" className="flex flex-col items-center p-6 bg-white rounded-lg border">
                                         <QRCodeDisplay value={qrData} size={260} />
+                                        <div className="mt-4 text-center">
+                                            <p className="font-semibold text-foreground">{selectedUpa?.entity_name}</p>
+                                            <p className="text-sm text-muted-foreground">{selectedIntent?.label}</p>
+                                            {selectedIntent?.amount_type === "fixed" && (
+                                                <p className="text-lg font-bold text-foreground mt-1">NPR {selectedIntent.fixed_amount?.toLocaleString()}</p>
+                                            )}
+                                            <p className="text-xs text-muted-foreground mt-2 font-mono">{selectedUpa?.address}</p>
+                                        </div>
                                     </div>
-
-                                    <div className="bg-muted/50 border rounded-lg p-3 max-h-40 overflow-y-auto">
-                                        <p className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
-                                            {JSON.stringify(JSON.parse(qrData), null, 2)}
-                                        </p>
-                                    </div>
-
                                     <div className="flex gap-2">
                                         <Button variant="outline" className="flex-1" size="sm" onClick={handleDownloadQR}>
-                                            <Download className="h-4 w-4 mr-1.5" />
-                                            Download
+                                            <Download className="h-4 w-4 mr-1.5" /> Download
                                         </Button>
                                         <Button variant="outline" className="flex-1" size="sm" onClick={handleCopyQR}>
                                             {copied ? <Check className="h-4 w-4 mr-1.5" /> : <Copy className="h-4 w-4 mr-1.5" />}
@@ -356,13 +302,67 @@ export default function OfficerPage() {
                             ) : (
                                 <div className="flex flex-col items-center justify-center h-64 text-muted-foreground gap-2">
                                     <QrCode className="h-12 w-12 opacity-20" />
-                                    <p className="text-sm">Generate a QR code to display it here</p>
+                                    <p className="text-sm">Select entity & type to generate QR</p>
                                 </div>
                             )}
                         </CardContent>
                     </Card>
                 </div>
-            </div>
+            ) : (
+                /* Collections Tab */
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                        <p className="text-sm text-muted-foreground">{entityTx.length} payments collected</p>
+                        <Button variant="outline" size="sm" onClick={() => { setLoading(true); loadTransactions().finally(() => setLoading(false)); }} disabled={loading}>
+                            <RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+                        </Button>
+                    </div>
+                    <Card>
+                        <CardContent className="pt-4">
+                            {loading ? (
+                                <div className="text-center py-8 text-muted-foreground">
+                                    <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2" />
+                                    <p className="text-sm">Loading...</p>
+                                </div>
+                            ) : entityTx.length === 0 ? (
+                                <div className="text-center py-8 text-muted-foreground">
+                                    <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                                    <p className="text-sm">No collections yet</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {entityTx.slice(0, 15).map((tx) => (
+                                        <div key={tx.id} className="flex items-center justify-between p-3 border rounded-lg">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-0.5">
+                                                    <p className="font-medium text-sm">{tx.metadata?.payerName || tx.intent}</p>
+                                                    {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                                                        : tx.status === "queued" || tx.status === "pending" ? <Clock className="h-3.5 w-3.5 text-warning shrink-0" />
+                                                        : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
+                                                </div>
+                                                <p className="text-xs text-muted-foreground">{tx.intent} &middot; {formatDate(new Date(tx.timestamp))}</p>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    {tx.mode === "offline" ? (
+                                                        <span className="inline-flex items-center gap-0.5 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded-full">
+                                                            <WifiOff className="h-2.5 w-2.5" /> Offline
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-0.5 text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded-full">
+                                                            <Wifi className="h-2.5 w-2.5" /> Online
+                                                        </span>
+                                                    )}
+                                                    {tx.metadata?.payerId && <span className="text-[10px] text-muted-foreground">ID: {tx.metadata.payerId}</span>}
+                                                </div>
+                                            </div>
+                                            <p className="font-semibold text-sm ml-3">{formatCurrency(tx.amount)}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
+            )}
         </div>
     );
 }
