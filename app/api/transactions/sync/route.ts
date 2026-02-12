@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { verifySignature } from "@/lib/crypto";
+import { initiateTransfer, type TransferRequest } from "@/lib/transfer";
 
 // POST /api/transactions/sync — sync offline payments
 export async function POST(request: NextRequest) {
@@ -53,6 +54,34 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // ── Fund Transfer via abstraction layer ─────────────────────
+      const transferReq: TransferRequest = {
+        txId,
+        source: {
+          walletId: qrPayload.metadata?.payerId || "unknown",
+          provider: "upa_wallet",
+        },
+        destination: {
+          upaAddress: qrPayload.upa,
+        },
+        amount: qrPayload.amount,
+        currency: "NPR",
+        purpose: qrPayload.intent?.name || qrPayload.intent?.id || "payment",
+        payerName: qrPayload.metadata?.payerName || "Unknown",
+        payerId: qrPayload.metadata?.payerId || "unknown",
+      };
+
+      const transferResult = await initiateTransfer(transferReq);
+
+      if (transferResult.status === "failed") {
+        results.push({
+          txId: null,
+          status: "failed",
+          reason: transferResult.errorMessage || "fund_transfer_failed",
+        });
+        continue;
+      }
+
       if (isSupabaseConfigured()) {
         // Check nonce hasn't been used
         const { data: existing } = await supabase
@@ -96,7 +125,13 @@ export async function POST(request: NextRequest) {
             wallet_provider: "upa_pay",
             status: "settled",
             mode: "offline",
-            metadata: qrPayload.metadata || {},
+            metadata: {
+              ...(qrPayload.metadata || {}),
+              transferId: transferResult.transferId,
+              bankReference: transferResult.bankReference,
+              fee: transferResult.fee,
+              netAmount: transferResult.netAmount,
+            },
             signature,
             nonce,
             issued_at: qrPayload.issuedAt || new Date().toISOString(),

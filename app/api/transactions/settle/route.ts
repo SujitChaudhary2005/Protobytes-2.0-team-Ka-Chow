@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { initiateTransfer, type TransferRequest } from "@/lib/transfer";
 
 // POST /api/transactions/settle — settle an online payment
 export async function POST(request: NextRequest) {
@@ -42,6 +43,33 @@ export async function POST(request: NextRequest) {
 
     const txId = `UPA-2026-${String(Date.now()).slice(-5)}`;
 
+    // ── Fund Transfer via abstraction layer ─────────────────────
+    const transferReq: TransferRequest = {
+      txId,
+      source: {
+        walletId: qrPayload.metadata?.payerId || "unknown",
+        provider: walletProvider === "connectIPS" ? "connectIPS" : "upa_wallet",
+      },
+      destination: {
+        upaAddress: qrPayload.upa,
+        bankCode: qrPayload.metadata?.bankCode,
+      },
+      amount: qrPayload.amount,
+      currency: "NPR",
+      purpose: qrPayload.intent?.name || qrPayload.intent?.id || "payment",
+      payerName: qrPayload.metadata?.payerName || "Unknown",
+      payerId: qrPayload.metadata?.payerId || "unknown",
+    };
+
+    const transferResult = await initiateTransfer(transferReq);
+
+    if (transferResult.status === "failed") {
+      return NextResponse.json(
+        { success: false, error: transferResult.errorMessage || "Fund transfer failed" },
+        { status: 500 }
+      );
+    }
+
     if (isSupabaseConfigured()) {
       // Look up UPA and intent
       const { data: upa } = await supabase
@@ -56,7 +84,7 @@ export async function POST(request: NextRequest) {
         .eq("intent_code", qrPayload.intent?.id || "")
         .single();
 
-      const { data: tx, error } = await supabase
+      const { error } = await supabase
         .from("transactions")
         .insert({
           tx_id: txId,
@@ -69,7 +97,13 @@ export async function POST(request: NextRequest) {
           wallet_provider: walletProvider,
           status: "settled",
           mode: "online",
-          metadata: qrPayload.metadata || {},
+          metadata: {
+            ...(qrPayload.metadata || {}),
+            transferId: transferResult.transferId,
+            bankReference: transferResult.bankReference,
+            fee: transferResult.fee,
+            netAmount: transferResult.netAmount,
+          },
           nonce: qrPayload.nonce,
           issued_at: qrPayload.issuedAt || new Date().toISOString(),
           settled_at: new Date().toISOString(),
@@ -81,14 +115,28 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        transaction: { txId, status: "settled", settledAt: new Date().toISOString() },
+        transaction: {
+          txId,
+          status: "settled",
+          settledAt: new Date().toISOString(),
+          transferId: transferResult.transferId,
+          bankReference: transferResult.bankReference,
+          fee: transferResult.fee,
+        },
       });
     }
 
     // Fallback: return success (localStorage handled on client)
     return NextResponse.json({
       success: true,
-      transaction: { txId, status: "settled", settledAt: new Date().toISOString() },
+      transaction: {
+        txId,
+        status: "settled",
+        settledAt: new Date().toISOString(),
+        transferId: transferResult.transferId,
+        bankReference: transferResult.bankReference,
+        fee: transferResult.fee,
+      },
     });
   } catch (error: any) {
     console.error("Settle error:", error);
