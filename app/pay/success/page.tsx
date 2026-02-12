@@ -4,7 +4,9 @@ import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { CheckCircle2, ArrowLeft, Loader2 } from "lucide-react";
+import { CheckCircle2, ArrowLeft, Loader2, Download, Printer } from "lucide-react";
+import { openReceipt, downloadReceipt } from "@/lib/receipt";
+import { toast } from "sonner";
 
 function SuccessContent() {
     const router = useRouter();
@@ -14,6 +16,25 @@ function SuccessContent() {
     const amount = searchParams.get("amount") || "0";
     const intent = searchParams.get("intent") || "—";
     const recipient = searchParams.get("recipient") || "—";
+
+    const receiptData = {
+        txId,
+        recipient,
+        amount: parseFloat(amount),
+        intent,
+        mode: "online" as const,
+        timestamp: Date.now(),
+        settledAt: Date.now(),
+    };
+
+    const handlePrint = () => {
+        openReceipt(receiptData);
+    };
+
+    const handleDownload = () => {
+        downloadReceipt(receiptData);
+        toast.success("Receipt downloaded");
+    };
 
     return (
         <div className="p-4 md:p-6 space-y-6">
@@ -49,7 +70,19 @@ function SuccessContent() {
                         </div>
                     </div>
 
-                    <Button className="w-full" onClick={() => router.push("/pay")}>
+                    {/* Receipt Actions */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <Button variant="outline" className="w-full" onClick={handlePrint}>
+                            <Printer className="h-4 w-4 mr-2" />
+                            Print Receipt
+                        </Button>
+                        <Button variant="outline" className="w-full" onClick={handleDownload}>
+                            <Download className="h-4 w-4 mr-2" />
+                            Download
+                        </Button>
+                    </div>
+
+                    <Button className="w-full" onClick={() => router.push("/")}>
                         <ArrowLeft className="h-4 w-4 mr-2" />
                         Back to Home
                     </Button>
