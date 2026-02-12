@@ -12,6 +12,9 @@ import {
     Wifi,
     WifiOff,
     ChevronUp,
+    UserCheck,
+    Store,
+    Building2,
 } from "lucide-react";
 
 import {
@@ -33,7 +36,7 @@ import { OfflineToggle } from "@/components/offline-toggle";
 const navMain = [
     {
         title: "Home",
-        url: "/pay",
+        url: "/",
         icon: Wallet,
     },
     {
@@ -42,22 +45,27 @@ const navMain = [
         icon: ScanLine,
     },
     {
-        title: "Generate QR",
+        title: "Officer Portal",
         url: "/officer",
         icon: QrCode,
     },
     {
-        title: "Dashboard",
-        url: "/dashboard",
-        icon: LayoutDashboard,
+        title: "Merchant",
+        url: "/merchant",
+        icon: Store,
     },
 ];
 
 const navSecondary = [
     {
-        title: "Admin Panel",
+        title: "Identity",
+        url: "/auth",
+        icon: UserCheck,
+    },
+    {
+        title: "Gov Dashboard",
         url: "/admin",
-        icon: Settings,
+        icon: Building2,
     },
 ];
 
@@ -65,7 +73,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const pathname = usePathname();
 
     const isActive = (url: string) => {
-        if (url === "/pay") return pathname === "/pay";
+        if (url === "/") return pathname === "/";
         return pathname.startsWith(url);
     };
 
@@ -75,7 +83,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SidebarMenu>
                     <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
-                            <Link href="/pay">
+                            <Link href="/">
                                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                                     <Shield className="size-4" />
                                 </div>
