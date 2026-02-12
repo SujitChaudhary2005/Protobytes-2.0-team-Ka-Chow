@@ -12,19 +12,20 @@ node_modules/
 
 # Production
 /build
+/dist
 
-# Misc
-.DS_Store
-*.pem
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # Debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-# Local env files
-.env*.local
-.env
+pnpm-debug.log*
 
 # Vercel
 .vercel
@@ -38,11 +39,24 @@ next-env.d.ts
 ios/
 android/
 
-# Documentation files (hackathon requirement)
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.pem
+coverage/
+
+# Documentation files (hackathon requirement - exclude all .md except README.md)
 *.md
 !README.md
 docs/
 CAPACITOR_SETUP.md
 SETUP.md
 PRD_COMPLIANCE.md
-
