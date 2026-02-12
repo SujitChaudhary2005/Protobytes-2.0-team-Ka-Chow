@@ -20,38 +20,70 @@ export default function ScanPageWrapper() {
 function ScanPage() {
     const router = useRouter();
     const { online } = useNetwork();
+    const [wantScan, setWantScan] = useState(false);
     const [scanning, setScanning] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [manualInput, setManualInput] = useState(false);
     const [pasteData, setPasteData] = useState("");
     const scannerRef = useRef<any>(null);
     const scannerContainerId = "qr-reader";
 
+    // Cleanup on unmount
     useEffect(() => {
-        return () => { stopScanning(); };
+        return () => {
+            if (scannerRef.current) {
+                scannerRef.current.stop().catch(() => {});
+                scannerRef.current = null;
+            }
+        };
     }, []);
 
-    const startScanning = async () => {
-        setError(null);
-        try {
-            const { Html5Qrcode } = await import("html5-qrcode");
-            const scanner = new Html5Qrcode(scannerContainerId);
-            scannerRef.current = scanner;
+    // Start scanner AFTER the container div is rendered and visible
+    useEffect(() => {
+        if (!wantScan || scanning) return;
 
-            await scanner.start(
-                { facingMode: "environment" },
-                { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1 },
-                (decodedText) => {
-                    handleScannedData(decodedText);
-                    stopScanning();
-                },
-                () => {}
-            );
-            setScanning(true);
-        } catch (err: any) {
-            setError(err.message || "Failed to start camera");
-        }
-    };
+        let cancelled = false;
+
+        const initScanner = async () => {
+            try {
+                // Wait for next paint so the div has real dimensions
+                await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+                if (cancelled) return;
+
+                const { Html5Qrcode } = await import("html5-qrcode");
+
+                // Clean up any previous scanner instance
+                if (scannerRef.current) {
+                    try { await scannerRef.current.stop(); } catch {}
+                }
+
+                const scanner = new Html5Qrcode(scannerContainerId);
+                scannerRef.current = scanner;
+
+                await scanner.start(
+                    { facingMode: "environment" },
+                    { fps: 10, qrbox: { width: 250, height: 250 } },
+                    (decodedText) => {
+                        handleScannedData(decodedText);
+                        stopScanning();
+                    },
+                    () => {}
+                );
+
+                if (!cancelled) setScanning(true);
+            } catch (err: any) {
+                if (!cancelled) {
+                    setError(err.message || "Failed to start camera");
+                    setWantScan(false);
+                }
+            }
+        };
+
+        initScanner();
+
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wantScan]);
 
     const stopScanning = async () => {
         try {
@@ -61,6 +93,7 @@ function ScanPage() {
             }
         } catch {}
         setScanning(false);
+        setWantScan(false);
     };
 
     const handleScannedData = (data: string) => {
@@ -94,27 +127,30 @@ function ScanPage() {
             {/* Camera Scanner */}
             <Card>
                 <CardContent className="p-4">
-                    <div
-                        id={scannerContainerId}
-                        className="w-full aspect-square bg-muted/30 rounded-lg overflow-hidden mb-4"
-                        style={{ display: scanning ? "block" : "none" }}
-                    />
-
-                    {!scanning && (
+                    {/* Container is rendered when user wants to scan, giving it real dimensions */}
+                    {wantScan ? (
+                        <>
+                            <div
+                                id={scannerContainerId}
+                                className="w-full rounded-lg overflow-hidden mb-4"
+                                style={{ minHeight: 300 }}
+                            />
+                            <Button variant="outline" className="w-full" onClick={stopScanning}>
+                                <XCircle className="h-4 w-4 mr-2" />
+                                Stop Camera
+                            </Button>
+                        </>
+                    ) : (
                         <div className="flex flex-col items-center justify-center h-64 gap-4">
                             <Camera className="h-12 w-12 text-muted-foreground/30" />
-                            <Button onClick={startScanning} size="lg">
+                            <Button
+                                onClick={() => { setError(null); setWantScan(true); }}
+                                size="lg"
+                            >
                                 <Camera className="h-4 w-4 mr-2" />
                                 Start Camera
                             </Button>
                         </div>
-                    )}
-
-                    {scanning && (
-                        <Button variant="outline" className="w-full" onClick={stopScanning}>
-                            <XCircle className="h-4 w-4 mr-2" />
-                            Stop Camera
-                        </Button>
                     )}
                 </CardContent>
             </Card>
