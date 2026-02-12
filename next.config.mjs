@@ -4,7 +4,6 @@ const nextConfig = {
     images: {
         domains: [],
     },
-    // Capacitor compatibility
     output: 'standalone',
 };
 

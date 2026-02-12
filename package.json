@@ -6,12 +6,7 @@
         "dev": "next dev",
         "build": "next build",
         "start": "next start",
-        "lint": "next lint",
-        "sync:ios": "npx cap sync ios",
-        "sync:android": "npx cap sync android",
-        "open:ios": "npx cap open ios",
-        "open:android": "npx cap open android",
-        "build:mobile": "next build && npx cap sync"
+        "lint": "next lint"
     },
     "dependencies": {
         "@hookform/resolvers": "^3.3.4",
@@ -46,15 +41,6 @@
         "zod": "^3.22.4"
     },
     "devDependencies": {
-        "@capacitor/android": "^5.5.1",
-        "@capacitor/app": "^5.0.6",
-        "@capacitor/camera": "^5.0.6",
-        "@capacitor/cli": "^5.5.1",
-        "@capacitor/core": "^5.5.1",
-        "@capacitor/ios": "^5.5.1",
-        "@capacitor/network": "^5.0.6",
-        "@capacitor/splash-screen": "^5.0.6",
-        "@capacitor/status-bar": "^5.0.6",
         "@types/node": "^20.11.0",
         "@types/qrcode": "^1.5.5",
         "@types/react": "^19.0.0",
