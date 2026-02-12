@@ -1,9 +1,24 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { Wallet, Transaction } from "@/types";
+import { Wallet, Transaction, UserRole, AppUser, MerchantProfile } from "@/types";
 import { generateKeyPair, keyToHex } from "@/lib/crypto";
 import { SecureKeyStore } from "@/lib/secure-storage";
+
+// Demo users — matches supabase/02_seed.sql
+const DEMO_USERS: AppUser[] = [
+    { id: "c1000000-0000-0000-0000-000000000001", email: "citizen@demo.np",  name: "Ram Bahadur Thapa", role: "citizen",  phone: "+9779841000001" },
+    { id: "c1000000-0000-0000-0000-000000000002", email: "officer@demo.np",  name: "Sita Sharma",       role: "officer",  phone: "+9779841000002" },
+    { id: "c1000000-0000-0000-0000-000000000003", email: "merchant@demo.np", name: "Hari Prasad Oli",   role: "merchant", phone: "+9779841000003" },
+    { id: "c1000000-0000-0000-0000-000000000004", email: "admin@demo.np",    name: "Gita Adhikari",     role: "admin",    phone: "+9779841000004" },
+];
+
+const DEMO_PASSWORDS: Record<string, string> = {
+    "citizen@demo.np": "citizen123",
+    "officer@demo.np": "officer123",
+    "merchant@demo.np": "merchant123",
+    "admin@demo.np": "admin123",
+};
 
 interface WalletContextType {
     wallet: Wallet | null;
@@ -11,11 +26,15 @@ interface WalletContextType {
     balance: number;
     isAuthenticated: boolean;
     isLoading: boolean;
+    user: AppUser | null;
+    role: UserRole | null;
+    merchantProfile: MerchantProfile | null;
     initializeWallet: () => void;
     addTransaction: (transaction: Transaction) => void;
     updateBalance: (amount: number) => void;
-    login: (citizenshipId: string, phone: string) => Promise<boolean>;
+    login: (email: string, password: string) => Promise<boolean>;
     logout: () => void;
+    registerMerchant: (profile: Omit<MerchantProfile, "id" | "upaAddress" | "registeredAt" | "ownerId">) => MerchantProfile;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -27,6 +46,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [mounted, setMounted] = useState(false);
+    const [user, setUser] = useState<AppUser | null>(null);
+    const [merchantProfile, setMerchantProfile] = useState<MerchantProfile | null>(null);
 
     // Load wallet on mount, migrating old keys to secure storage
     useEffect(() => {
@@ -44,12 +65,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     const s = JSON.parse(session);
                     if (s.expiresAt > Date.now()) {
                         setIsAuthenticated(true);
+                        // Restore user from session
+                        if (s.user) {
+                            setUser(s.user);
+                        }
                     } else {
                         localStorage.removeItem("upa_auth_session");
                     }
                 } catch {
                     localStorage.removeItem("upa_auth_session");
                 }
+            }
+
+            // Load merchant profile
+            const storedMerchant = localStorage.getItem("upa_merchant_profile");
+            if (storedMerchant) {
+                try { setMerchantProfile(JSON.parse(storedMerchant)); } catch { /* ignore */ }
             }
 
             // Load wallet
@@ -131,40 +162,35 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
 
     /**
-     * Login with Citizenship ID + phone (demo auth)
-     * In production: integrates with Supabase Auth SMS OTP or govt ID verification
+     * Login with email + password (demo auth — matches seeded users)
      */
-    const login = useCallback(async (citizenshipId: string, phone: string): Promise<boolean> => {
+    const login = useCallback(async (email: string, password: string): Promise<boolean> => {
         try {
-            // Simulate OTP verification delay
-            await new Promise((r) => setTimeout(r, 800));
+            // Simulate network delay
+            await new Promise((r) => setTimeout(r, 600));
 
-            // Validate citizenship ID format: XX-XX-XX-XXXXX
-            const cidPattern = /^\d{2}-\d{2}-\d{2}-\d{5}$/;
-            if (!cidPattern.test(citizenshipId)) {
+            // Check demo credentials
+            const expectedPassword = DEMO_PASSWORDS[email.toLowerCase()];
+            if (!expectedPassword || expectedPassword !== password) {
                 return false;
             }
 
-            // Validate Nepali phone number: +977 9XXXXXXXXX
-            const phonePattern = /^(\+977)?9\d{9}$/;
-            const cleanPhone = phone.replace(/[\s-]/g, "");
-            if (!phonePattern.test(cleanPhone)) {
-                return false;
-            }
+            const matchedUser = DEMO_USERS.find(u => u.email === email.toLowerCase());
+            if (!matchedUser) return false;
 
-            // Create authenticated session
+            // Create authenticated session with role
             const session = {
-                citizenshipId,
-                phone: cleanPhone,
+                user: matchedUser,
                 loginAt: Date.now(),
                 expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
             };
             localStorage.setItem("upa_auth_session", JSON.stringify(session));
             setIsAuthenticated(true);
+            setUser(matchedUser);
 
             // Update wallet name
             if (wallet) {
-                const updated = { ...wallet, name: `Citizen ${citizenshipId.slice(-5)}` };
+                const updated = { ...wallet, name: matchedUser.name };
                 setWallet(updated);
                 localStorage.setItem("upa_wallet", JSON.stringify(updated));
             }
@@ -175,9 +201,32 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
     }, [wallet]);
 
+    /**
+     * Register a citizen as a merchant — creates profile with generated UPA address
+     */
+    const registerMerchant = useCallback((profile: Omit<MerchantProfile, "id" | "upaAddress" | "registeredAt" | "ownerId">): MerchantProfile => {
+        const slug = profile.businessName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "");
+        const newProfile: MerchantProfile = {
+            ...profile,
+            id: `merchant_${Date.now()}`,
+            upaAddress: `${slug}@merchant.np`,
+            registeredAt: Date.now(),
+            ownerId: user?.id ?? "unknown",
+        };
+        setMerchantProfile(newProfile);
+        localStorage.setItem("upa_merchant_profile", JSON.stringify(newProfile));
+        return newProfile;
+    }, [user]);
+
     const logout = useCallback(() => {
         localStorage.removeItem("upa_auth_session");
+        localStorage.removeItem("upa_merchant_profile");
         setIsAuthenticated(false);
+        setUser(null);
+        setMerchantProfile(null);
     }, []);
 
     return (
@@ -188,11 +237,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 balance,
                 isAuthenticated,
                 isLoading,
+                user,
+                role: user?.role ?? null,
+                merchantProfile,
                 initializeWallet,
                 addTransaction,
                 updateBalance,
                 login,
                 logout,
+                registerMerchant,
             }}
         >
             {children}
