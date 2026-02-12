@@ -1,27 +1,10 @@
 /**
  * Secure Key Storage Abstraction Layer
  *
- * On Web: Uses localStorage (development) or IndexedDB with encryption
- * On Capacitor (iOS/Android): Uses native Secure Enclave / Keystore
- * via @capacitor-community/secure-storage-plugin
+ * Uses localStorage (development) or IndexedDB with encryption
  *
  * All private key material is routed through this module.
  */
-
-// Detect if we're running inside Capacitor
-function isCapacitor(): boolean {
-  return typeof window !== "undefined" && !!(window as any).Capacitor;
-}
-
-// ---------- Capacitor Secure Storage (native) ----------
-
-async function getCapacitorSecureStorage() {
-  // Dynamic import so the plugin is only loaded on native
-  const { SecureStoragePlugin } = await import(
-    "@capacitor-community/secure-storage-plugin"
-  );
-  return SecureStoragePlugin;
-}
 
 // ---------- Web Fallback (encrypted IndexedDB via SubtleCrypto) ----------
 
@@ -145,10 +128,7 @@ export const SecureKeyStore = {
    * Store a value securely
    */
   async set(key: string, value: string): Promise<void> {
-    if (isCapacitor()) {
-      const plugin = await getCapacitorSecureStorage();
-      await plugin.set({ key, value });
-    } else if (typeof window !== "undefined" && window.crypto?.subtle) {
+    if (typeof window !== "undefined" && window.crypto?.subtle) {
       await idbSet(key, value);
     } else {
       // Last resort: plain localStorage (SSR or old browsers)
@@ -160,15 +140,7 @@ export const SecureKeyStore = {
    * Retrieve a value securely
    */
   async get(key: string): Promise<string | null> {
-    if (isCapacitor()) {
-      const plugin = await getCapacitorSecureStorage();
-      try {
-        const { value } = await plugin.get({ key });
-        return value;
-      } catch {
-        return null;
-      }
-    } else if (typeof window !== "undefined" && window.crypto?.subtle) {
+    if (typeof window !== "undefined" && window.crypto?.subtle) {
       return idbGet(key);
     } else {
       return localStorage.getItem(`secure_${key}`);
@@ -179,14 +151,7 @@ export const SecureKeyStore = {
    * Remove a value
    */
   async remove(key: string): Promise<void> {
-    if (isCapacitor()) {
-      const plugin = await getCapacitorSecureStorage();
-      try {
-        await plugin.remove({ key });
-      } catch {
-        // Key may not exist
-      }
-    } else if (typeof window !== "undefined" && window.crypto?.subtle) {
+    if (typeof window !== "undefined" && window.crypto?.subtle) {
       await idbRemove(key);
     } else {
       localStorage.removeItem(`secure_${key}`);
