@@ -1,52 +1,129 @@
-export interface PaymentIntent {
-    recipient: string;
-    recipientName: string;
-    amount: number;
-    intent: string;
-    metadata?: Record<string, string>;
-    signature?: string;
-    publicKey?: string;
-    timestamp?: number;
-    nonce?: string;
+// ============================================
+// UPA-NP Shared Types (PRD-Aligned)
+// ============================================
+
+// === QR Payload Types (The Innovation) ===
+
+interface BaseQRPayload {
+  version: "1.0";
+  upa: string;              // "traffic@nepal.gov"
+  intent: {
+    id: string;             // "traffic_fine"
+    category: string;       // "fine"
+    label: string;          // "Traffic Violation Fine"
+  };
+  amount: number;
+  currency: "NPR";
+  metadata: Record<string, string>;
+  payer_name: string;
+  payer_id: string;
+  issuedAt: string;         // ISO timestamp
+  expiresAt: string;        // ISO timestamp (1 hour)
+  nonce: string;            // UUID-like (prevents replay)
 }
 
-export interface Wallet {
-    id: string;
-    name: string;
-    balance: number;
-    address: string;
-    publicKey: string;
+export interface OnlineQRPayload extends BaseQRPayload {
+  type: "online";
 }
+
+export interface OfflineQRPayload extends BaseQRPayload {
+  type: "offline";
+  signature: string;        // Ed25519 signature (hex)
+  publicKey: string;        // Issuer's public key (hex)
+}
+
+export type QRPayload = OnlineQRPayload | OfflineQRPayload;
+
+// === UPA Types ===
+
+export interface UPA {
+  id: string;
+  address: string;
+  entity_name: string;
+  entity_type: "government" | "institution" | "merchant";
+  public_key: string | null;
+  intents: IntentTemplate[];
+}
+
+export interface IntentTemplate {
+  id: string;
+  intent_code: string;
+  category: string;
+  label: string;
+  amount_type: "fixed" | "range" | "open";
+  fixed_amount: number | null;
+  min_amount: number | null;
+  max_amount: number | null;
+  metadata_schema: Record<string, MetadataField>;
+}
+
+export interface MetadataField {
+  type: string;
+  label: string;
+  required: boolean;
+}
+
+// === Transaction Types ===
 
 export interface Transaction {
-    id: string;
-    recipient: string;
-    recipientName?: string;
-    amount: number;
-    intent: string;
-    metadata?: Record<string, string>;
-    status: "pending" | "settled" | "failed" | "queued";
-    timestamp: number;
-    txHash?: string;
+  id: string;
+  tx_id?: string;
+  recipient: string;
+  recipientName?: string;
+  amount: number;
+  intent: string;
+  intentCategory?: string;
+  metadata?: Record<string, string>;
+  status: "pending" | "settled" | "failed" | "queued" | "syncing";
+  mode: "online" | "offline";
+  signature?: string;
+  publicKey?: string;
+  nonce?: string;
+  timestamp: number;
+  settledAt?: number;
+  syncedAt?: number;
+  walletProvider?: string;
 }
 
-export interface BankAccount {
-    id: string;
-    bankName: string;
-    accountNumber: string;
-    accountType: string;
-    balance?: number;
-    linkedAt: string;
+// === Wallet Types ===
+
+export interface Wallet {
+  id: string;
+  name: string;
+  balance: number;
+  address: string;
+  publicKey: string;
 }
 
-export interface QRType {
-    type: "UPA-NP" | "eSewa" | "Khalti" | "IME Pay" | "Bank QR";
-    cost: number;
-    available: boolean;
-}
+// === Network Types ===
 
 export interface NetworkStatus {
-    online: boolean;
-    lastChecked: number;
+  online: boolean;
+  lastChecked: number;
+}
+
+// === Dashboard Types (from Supabase) ===
+
+export interface SupabaseTransaction {
+  id: string;
+  tx_id: string;
+  upa_id: string;
+  intent_id: string;
+  amount: number;
+  currency: string;
+  payer_name: string | null;
+  payer_id: string | null;
+  wallet_provider: string;
+  status: string;
+  mode: string;
+  metadata: Record<string, string>;
+  signature: string | null;
+  nonce: string | null;
+  issued_at: string;
+  settled_at: string | null;
+  synced_at: string | null;
+  created_at: string;
+  upas?: { address: string; entity_name: string };
+  intents?: { intent_code: string; label: string; category: string };
 }
 

@@ -1,82 +1,73 @@
 "use client";
 
+import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { formatCurrency, formatDate } from "@/lib/utils";
-import { CheckCircle2, Download, Home } from "lucide-react";
-import Link from "next/link";
+import { CheckCircle2, ArrowLeft, Loader2 } from "lucide-react";
 
-export default function SuccessPage() {
+function SuccessContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const amount = searchParams.get("amount");
-    const intent = searchParams.get("intent");
+
+    const txId = searchParams.get("txId") || "—";
+    const amount = searchParams.get("amount") || "0";
+    const intent = searchParams.get("intent") || "—";
+    const recipient = searchParams.get("recipient") || "—";
 
     return (
-        <div className="min-h-screen bg-background">
-            <main className="container mx-auto px-4 py-12">
-                <div className="max-w-md mx-auto space-y-6">
-                    {/* Success Icon */}
-                    <div className="flex justify-center">
-                        <div className="p-4 bg-accent/10 rounded-full">
-                            <CheckCircle2 className="h-16 w-16 text-accent" />
+        <div className="p-4 md:p-6 space-y-6">
+            <Card>
+                <CardContent className="p-8 text-center space-y-6">
+                    <div className="mx-auto w-20 h-20 rounded-full bg-success/10 flex items-center justify-center">
+                        <CheckCircle2 className="h-10 w-10 text-success" />
+                    </div>
+
+                    <div>
+                        <h2 className="text-2xl font-bold">Payment Successful!</h2>
+                        <p className="text-muted-foreground mt-1">
+                            Your transaction has been settled
+                        </p>
+                    </div>
+
+                    <div className="space-y-3 text-left bg-muted/30 rounded-lg p-4">
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Transaction ID</span>
+                            <span className="font-mono text-xs">{txId.slice(0, 12)}...</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Amount</span>
+                            <span className="font-bold">NPR {amount}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Intent</span>
+                            <span className="capitalize">{intent}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Recipient</span>
+                            <span className="font-mono text-sm">{recipient}</span>
                         </div>
                     </div>
 
-                    {/* Success Message */}
-                    <div className="text-center space-y-2">
-                        <h1 className="text-2xl font-semibold">Payment Successful</h1>
-                        <p className="text-3xl font-bold">
-                            {amount ? formatCurrency(parseFloat(amount)) : formatCurrency(0)}
-                        </p>
-                        <p className="text-muted-foreground">
-                            {intent ? decodeURIComponent(intent) : "Payment"}
-                        </p>
-                    </div>
-
-                    {/* Transaction Details */}
-                    <Card>
-                        <CardContent className="p-6 space-y-4">
-                            <div className="space-y-3">
-                                <div className="flex justify-between">
-                                    <span className="text-sm text-muted-foreground">
-                                        Transaction ID:
-                                    </span>
-                                    <span className="text-sm font-mono">
-                                        UPA-2026-{String(Date.now()).slice(-5)}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-sm text-muted-foreground">Time:</span>
-                                    <span className="text-sm">{formatDate(new Date())}</span>
-                                </div>
-                                <div className="pt-3 border-t border-border">
-                                    <p className="text-xs text-muted-foreground">
-                                        Receipt details will be available in your transaction
-                                        history.
-                                    </p>
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* Actions */}
-                    <div className="space-y-2">
-                        <Button variant="outline" className="w-full">
-                            <Download className="h-4 w-4 mr-2" />
-                            Download Receipt
-                        </Button>
-                        <Button className="w-full" asChild>
-                            <Link href="/pay">
-                                <Home className="h-4 w-4 mr-2" />
-                                Back to Home
-                            </Link>
-                        </Button>
-                    </div>
-                </div>
-            </main>
+                    <Button className="w-full" onClick={() => router.push("/pay")}>
+                        <ArrowLeft className="h-4 w-4 mr-2" />
+                        Back to Home
+                    </Button>
+                </CardContent>
+            </Card>
         </div>
+    );
+}
+
+export default function SuccessPage() {
+    return (
+        <Suspense fallback={
+            <div className="p-4 md:p-6 flex items-center justify-center min-h-[50vh]">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+        }>
+            <SuccessContent />
+        </Suspense>
     );
 }
 

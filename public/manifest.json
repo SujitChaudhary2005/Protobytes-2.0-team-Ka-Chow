@@ -1,0 +1,25 @@
+{
+  "name": "UPA Pay - Unified Payment Address",
+  "short_name": "UPA Pay",
+  "description": "Offline-capable government payment system for Nepal using intent-locked QR codes and Ed25519 cryptographic verification.",
+  "start_url": "/pay",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563EB",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "categories": ["finance", "government"],
+  "lang": "en",
+  "dir": "ltr"
+}

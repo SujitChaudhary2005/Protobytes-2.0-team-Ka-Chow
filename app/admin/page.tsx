@@ -32,20 +32,51 @@ export default function AdminDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
-    loadTransactions();
+    const load = async () => {
+      setLoading(true);
+      await loadTransactions();
+      setLoading(false);
+    };
+    load();
     // Auto-refresh every 5 seconds
     const interval = setInterval(loadTransactions, 5000);
     return () => clearInterval(interval);
   }, []);
 
-  const loadTransactions = () => {
+  const loadTransactions = async () => {
+    try {
+      // Try API first (includes fallback demo data)
+      const res = await fetch("/api/transactions");
+      if (res.ok) {
+        const result = await res.json();
+        if (result.data && Array.isArray(result.data) && result.data.length > 0) {
+          setTransactions(result.data.map((tx: any) => ({
+            id: tx.id || tx.tx_id,
+            recipient: tx.recipient || tx.upa_address || tx.upa_id || "",
+            recipientName: tx.recipientName || tx.entity_name || "",
+            amount: tx.amount,
+            intent: tx.intent || tx.intent_label || "",
+            metadata: tx.metadata || {},
+            status: tx.status,
+            mode: tx.mode || "online",
+            signature: tx.signature,
+            publicKey: tx.publicKey,
+            timestamp: tx.timestamp || new Date(tx.issued_at || tx.created_at || Date.now()).getTime(),
+            nonce: tx.nonce,
+            walletProvider: tx.walletProvider || tx.wallet_provider,
+          })));
+          return;
+        }
+      }
+    } catch {
+      // API failed, fall back to localStorage
+    }
+
     try {
       const data = getTransactions();
       setTransactions(data);
     } catch (err) {
       console.error("Load error:", err);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -98,37 +129,26 @@ export default function AdminDashboard() {
   const reconciliationRate = stats.total > 0 ? Math.round((stats.settled / stats.total) * 100) : 100;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-border/40 bg-surface/80 backdrop-blur-lg shadow-sm">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-gradient-to-br from-primary to-accent rounded-lg">
-                <Activity className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                  Admin Dashboard
-                </h1>
-                <p className="text-sm text-muted-foreground">UPA-NP Transaction Management</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm">
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </Button>
-              <Button onClick={loadTransactions} disabled={loading} size="sm">
-                <Activity className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-                Refresh
-              </Button>
-            </div>
-          </div>
+    <div className="p-4 md:p-6 space-y-6">
+      {/* Page Title */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-semibold">Admin Dashboard</h2>
+          <p className="text-sm text-muted-foreground">UPA-NP Transaction Management</p>
         </div>
-      </header>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm">
+            <Download className="h-4 w-4 mr-2" />
+            Export
+          </Button>
+          <Button onClick={loadTransactions} disabled={loading} size="sm">
+            <Activity className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
+      </div>
 
-      <main className="container mx-auto px-4 py-6 space-y-6">
+      <main className="space-y-6">
         {/* Stats Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card className="border-l-4 border-l-primary shadow-lg hover:shadow-xl transition-shadow">

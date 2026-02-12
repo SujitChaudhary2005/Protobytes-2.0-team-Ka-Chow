@@ -1,4 +1,4 @@
-# UPA-NP — Unified Payment Address for Nepal
+# UPA-NP — Unified Payment Address for Nepal (SaralPay)
 
 ## Team Information
 
@@ -17,7 +17,7 @@
 
 ## Project Details
 
-**Project Title:** UPA-NP (Unified Payment Address for Nepal)
+**Project Title:** UPA-NP (Unified Payment Address for Nepal) (SaralPay)
 
 **Category:** [x] FinTech [ ] EdTech [ ] E-Governance [ ] IoT [ ] Open Innovation
 
@@ -25,7 +25,7 @@
 Nepal's digital payment ecosystem suffers from severe fragmentation — multiple platforms (eSewa, Khalti, IME Pay, fonepay, Connect IPS) operate in isolation with no interoperability. Government offices receive hundreds of payments daily with zero structured metadata, requiring hours of manual reconciliation. All digital payments require internet, failing in rural Nepal and during outages.
 
 **Solution Overview:**
-UPA-NP is a unified payment intelligence layer that transforms raw money transfers into structured, intent-locked, auditable transactions purpose-built for Nepal's ecosystem. It provides a protocol-level solution through three interconnected interfaces: an Officer Portal for generating cryptographically signed QR codes (online + offline), a reference Wallet App (UPA Pay) that demonstrates how any wallet can scan, verify, and settle intent-locked payments, and a Reconciliation Dashboard for real-time auto-reconciliation and analytics. The system uses Ed25519 digital signatures for offline verification, ensuring payments carry full context (purpose, payer identity, metadata) and can be processed even without internet connectivity. UPA-NP doesn't replace existing wallets — it creates the interoperability layer that connects them all while adding intelligence and resilience.
+UPA-NP is a unified payment intelligence layer that transforms raw money transfers into structured, intent-locked, auditable transactions purpose-built for Nepal's ecosystem. It provides a protocol-level solution through three interconnected interfaces: an Officer Portal for generating cryptographically signed QR codes (online + offline), a reference Wallet App (SaralPay) that demonstrates how any wallet can scan, verify, and settle intent-locked payments, and a Reconciliation Dashboard for real-time auto-reconciliation and analytics. The system uses Ed25519 digital signatures for offline verification, ensuring payments carry full context (purpose, payer identity, metadata) and can be processed even without internet connectivity. UPA-NP doesn't replace existing wallets — it creates the interoperability layer that connects them all while adding intelligence and resilience.
 
 ---
 

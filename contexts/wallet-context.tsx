@@ -2,13 +2,13 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { Wallet, Transaction } from "@/types";
-import { ed25519 } from "@noble/ed25519";
+import { generateKeyPair, keyToHex } from "@/lib/crypto";
 
 interface WalletContextType {
     wallet: Wallet | null;
     transactions: Transaction[];
     balance: number;
-    initializeWallet: () => Promise<void>;
+    initializeWallet: () => void;
     addTransaction: (transaction: Transaction) => void;
     updateBalance: (amount: number) => void;
 }
@@ -49,15 +49,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
     }, []);
 
-    const initializeWallet = async () => {
+    const initializeWallet = () => {
         if (typeof window === "undefined") return;
 
-        const privateKey = ed25519.utils.randomPrivateKey();
-        const publicKey = ed25519.getPublicKey(privateKey);
-        const address = Array.from(publicKey)
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("")
-            .slice(0, 20);
+        const { publicKey, privateKey } = generateKeyPair();
+        const address = keyToHex(publicKey).slice(0, 20);
 
         // Use a stable ID to prevent hydration mismatches
         const walletId = localStorage.getItem("upa_wallet_id") || `wallet_${Date.now()}`;
@@ -70,18 +66,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             name: "Demo Wallet",
             balance: 50000,
             address: `upa_${address}`,
-            publicKey: Array.from(publicKey)
-                .map((b) => b.toString(16).padStart(2, "0"))
-                .join(""),
+            publicKey: keyToHex(publicKey),
         };
 
-        localStorage.setItem(
-            "upa_private_key",
-            Array.from(privateKey)
-                .map((b) => b.toString(16).padStart(2, "0"))
-                .join("")
-        );
-
+        localStorage.setItem("upa_private_key", keyToHex(privateKey));
         setWallet(newWallet);
         localStorage.setItem("upa_wallet", JSON.stringify(newWallet));
     };

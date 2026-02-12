@@ -1,7 +1,22 @@
-import { ed25519 } from "@noble/ed25519";
-import { randomBytes } from "@noble/ed25519";
+import * as ed from "@noble/ed25519";
+import { sha512 } from "@noble/hashes/sha2.js";
 
-// Browser-compatible Buffer polyfill
+// Required: set sha512 sync for ed25519
+try {
+  // @ts-ignore - etc may be read-only in some builds
+  const etc = ed.etc;
+  if (etc && !etc.sha512Sync) {
+    Object.defineProperty(etc, 'sha512Sync', {
+      value: (...m: Uint8Array[]) => sha512(etc.concatBytes(...m)),
+      writable: false,
+      configurable: true,
+    });
+  }
+} catch {
+  // Ignore if already set or read-only
+}
+
+// Hex encoding helpers
 const toHex = (bytes: Uint8Array): string => {
     return Array.from(bytes)
         .map((b) => b.toString(16).padStart(2, "0"))
@@ -16,51 +31,46 @@ const fromHex = (hex: string): Uint8Array => {
     return bytes;
 };
 
-export interface SignedPayload {
-    payload: string;
-    signature: string;
-    publicKey: string;
-    timestamp: number;
-    nonce: string;
-}
-
 /**
  * Generate a new Ed25519 key pair
  */
-export async function generateKeyPair(): Promise<{
+export function generateKeyPair(): {
     publicKey: Uint8Array;
     privateKey: Uint8Array;
-}> {
-    const privateKey = ed25519.utils.randomPrivateKey();
-    const publicKey = ed25519.getPublicKey(privateKey);
+} {
+    const privateKey = ed.utils.randomPrivateKey();
+    const publicKey = ed.getPublicKey(privateKey);
     return { publicKey, privateKey };
 }
 
 /**
- * Sign a payload with Ed25519
+ * Sign a canonical JSON payload with Ed25519
  */
-export async function signPayload(
-    payload: string,
+export function signPayload(
+    payload: object,
     privateKey: Uint8Array
-): Promise<string> {
-    const message = new TextEncoder().encode(payload);
-    const signature = await ed25519.sign(message, privateKey);
+): string {
+    const message = new TextEncoder().encode(
+        JSON.stringify(payload, Object.keys(payload).sort())
+    );
+    const signature = ed.sign(message, privateKey);
     return toHex(signature);
 }
 
 /**
- * Verify a signature
+ * Verify a signature against a payload
  */
-export async function verifySignature(
-    payload: string,
-    signature: string,
-    publicKey: string
-): Promise<boolean> {
+export function verifySignature(
+    payload: object | string,
+    signatureHex: string,
+    publicKeyHex: string
+): boolean {
     try {
-        const message = new TextEncoder().encode(payload);
-        const sigBytes = fromHex(signature);
-        const pubKeyBytes = fromHex(publicKey);
-        return await ed25519.verify(sigBytes, message, pubKeyBytes);
+        const data = typeof payload === "string" ? payload : JSON.stringify(payload, Object.keys(payload).sort());
+        const message = new TextEncoder().encode(data);
+        const sigBytes = fromHex(signatureHex);
+        const pubKeyBytes = fromHex(publicKeyHex);
+        return ed.verify(sigBytes, message, pubKeyBytes);
     } catch {
         return false;
     }
@@ -70,42 +80,33 @@ export async function verifySignature(
  * Generate a nonce for replay protection
  */
 export function generateNonce(): string {
-    return Buffer.from(randomBytes(16)).toString("hex");
+    const array = new Uint8Array(16);
+    if (typeof crypto !== "undefined") {
+        crypto.getRandomValues(array);
+    } else {
+        for (let i = 0; i < 16; i++) array[i] = Math.floor(Math.random() * 256);
+    }
+    return toHex(array);
 }
 
 /**
- * Create a signed payment request
+ * Get public key hex from private key
  */
-export async function createSignedPaymentRequest(
-    paymentData: {
-        recipient: string;
-        amount: number;
-        intent: string;
-        metadata?: Record<string, string>;
-    },
-    privateKey: Uint8Array
-): Promise<SignedPayload> {
-    const nonce = generateNonce();
-    const timestamp = Date.now();
+export function getPublicKeyHex(privateKey: Uint8Array): string {
+    return toHex(ed.getPublicKey(privateKey));
+}
 
-    const payload = JSON.stringify({
-        recipient: paymentData.recipient,
-        amount: paymentData.amount,
-        intent: paymentData.intent,
-        metadata: paymentData.metadata || {},
-        timestamp,
-        nonce,
-    });
+/**
+ * Convert key to hex string
+ */
+export function keyToHex(key: Uint8Array): string {
+    return toHex(key);
+}
 
-    const signature = await signPayload(payload, privateKey);
-    const publicKey = ed25519.getPublicKey(privateKey);
-
-    return {
-        payload,
-        signature,
-        publicKey: toHex(publicKey),
-        timestamp,
-        nonce,
-    };
+/**
+ * Convert hex string to key bytes
+ */
+export function hexToKey(hex: string): Uint8Array {
+    return fromHex(hex);
 }
 

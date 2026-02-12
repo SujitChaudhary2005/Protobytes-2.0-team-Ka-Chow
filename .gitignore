@@ -1,18 +1,15 @@
 # Dependencies
 node_modules/
-/.pnp
+.pnp
 .pnp.js
 
-# Testing
-/coverage
-
 # Next.js
-/.next/
-/out/
+.next/
+out/
 
 # Production
-/build
-/dist
+build/
+dist/
 
 # Environment
 .env
@@ -34,11 +31,6 @@ pnpm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Capacitor
-.capacitor/
-ios/
-android/
-
 # IDE
 .vscode/
 .idea/
@@ -49,14 +41,12 @@ android/
 .DS_Store
 Thumbs.db
 
+# Prisma
+prisma/*.db
+
 # Misc
 *.pem
 coverage/
 
-# Documentation files (hackathon requirement - exclude all .md except README.md)
-*.md
-!README.md
-docs/
-CAPACITOR_SETUP.md
-SETUP.md
-PRD_COMPLIANCE.md
+#file
+Test.md

@@ -35,10 +35,10 @@ export const db = new OfflineDB();
 export async function queueTransaction(
     transaction: Omit<QueuedTransaction, "id" | "status">
 ): Promise<number> {
-    return await db.transactions.add({
+    return (await db.transactions.add({
         ...transaction,
         status: "queued",
-    });
+    })) as number;
 }
 
 /**

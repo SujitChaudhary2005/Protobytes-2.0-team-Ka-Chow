@@ -2,170 +2,142 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { NetworkStatus } from "@/components/network-status";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { useNetwork } from "@/hooks/use-network";
-import { ArrowLeft, Camera, CheckCircle2 } from "lucide-react";
-import Link from "next/link";
+import { Camera, Clipboard, Keyboard, XCircle } from "lucide-react";
 
 export default function ScanPage() {
     const router = useRouter();
     const { online } = useNetwork();
     const [scanning, setScanning] = useState(false);
-    const [scannedData, setScannedData] = useState<string | null>(null);
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const streamRef = useRef<MediaStream | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [manualInput, setManualInput] = useState(false);
+    const [pasteData, setPasteData] = useState("");
+    const scannerRef = useRef<any>(null);
+    const scannerContainerId = "qr-reader";
 
     useEffect(() => {
-        return () => {
-            if (streamRef.current) {
-                streamRef.current.getTracks().forEach((track) => track.stop());
-            }
-        };
+        return () => { stopScanning(); };
     }, []);
 
     const startScanning = async () => {
+        setError(null);
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment" },
-            });
-            streamRef.current = stream;
-            if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-                setScanning(true);
-            }
-        } catch (err) {
-            console.error("Camera access error:", err);
-            // Fallback: Manual QR entry
-            const manualQR = prompt("Enter QR code data manually:");
-            if (manualQR) {
-                handleScannedData(manualQR);
-            }
+            const { Html5Qrcode } = await import("html5-qrcode");
+            const scanner = new Html5Qrcode(scannerContainerId);
+            scannerRef.current = scanner;
+
+            await scanner.start(
+                { facingMode: "environment" },
+                { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1 },
+                (decodedText) => {
+                    handleScannedData(decodedText);
+                    stopScanning();
+                },
+                () => {}
+            );
+            setScanning(true);
+        } catch (err: any) {
+            setError(err.message || "Failed to start camera");
         }
     };
 
-    const stopScanning = () => {
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach((track) => track.stop());
-            streamRef.current = null;
-        }
+    const stopScanning = async () => {
+        try {
+            if (scannerRef.current) {
+                await scannerRef.current.stop();
+                scannerRef.current = null;
+            }
+        } catch {}
         setScanning(false);
     };
 
     const handleScannedData = (data: string) => {
-        setScannedData(data);
-        stopScanning();
-        // Parse QR data and navigate to confirmation
         try {
             const parsed = JSON.parse(data);
-            router.push(
-                `/pay/confirm?data=${encodeURIComponent(JSON.stringify(parsed))}`
-            );
+            if (!parsed.upa || !parsed.amount) {
+                setError("Invalid QR code format");
+                return;
+            }
+            router.push(`/pay/confirm?data=${encodeURIComponent(data)}`);
         } catch {
-            router.push(`/pay/confirm?qr=${encodeURIComponent(data)}`);
+            setError("Could not parse QR code data");
+        }
+    };
+
+    const handlePaste = () => {
+        if (pasteData.trim()) {
+            handleScannedData(pasteData.trim());
         }
     };
 
     return (
-        <div className="min-h-screen bg-background">
-            {/* Header */}
-            <header className="sticky top-0 z-10 border-b border-border bg-surface">
-                <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-                    <Button variant="ghost" size="icon" asChild>
-                        <Link href="/pay">
-                            <ArrowLeft className="h-5 w-5" />
-                        </Link>
+        <div className="p-4 md:p-6 space-y-6">
+            <div>
+                <h2 className="text-2xl font-semibold">Scan QR Code</h2>
+                <p className="text-sm text-muted-foreground">
+                    Point your camera at a UPA payment QR code
+                </p>
+            </div>
+
+            {/* Camera Scanner */}
+            <Card>
+                <CardContent className="p-4">
+                    <div
+                        id={scannerContainerId}
+                        className="w-full aspect-square bg-muted/30 rounded-lg overflow-hidden mb-4"
+                        style={{ display: scanning ? "block" : "none" }}
+                    />
+
+                    {!scanning && (
+                        <div className="flex flex-col items-center justify-center h-64 gap-4">
+                            <Camera className="h-12 w-12 text-muted-foreground/30" />
+                            <Button onClick={startScanning} size="lg">
+                                <Camera className="h-4 w-4 mr-2" />
+                                Start Camera
+                            </Button>
+                        </div>
+                    )}
+
+                    {scanning && (
+                        <Button variant="outline" className="w-full" onClick={stopScanning}>
+                            <XCircle className="h-4 w-4 mr-2" />
+                            Stop Camera
+                        </Button>
+                    )}
+                </CardContent>
+            </Card>
+
+            {error && (
+                <Card className="border-danger/50 bg-danger/5">
+                    <CardContent className="p-4 text-sm text-danger">
+                        {error}
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* Manual Input */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                        <Keyboard className="h-4 w-4" />
+                        Manual Input
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-3">
+                    <Input
+                        placeholder="Paste QR payload JSON..."
+                        value={pasteData}
+                        onChange={(e) => setPasteData(e.target.value)}
+                    />
+                    <Button variant="outline" className="w-full" onClick={handlePaste} disabled={!pasteData.trim()}>
+                        <Clipboard className="h-4 w-4 mr-2" />
+                        Process Payload
                     </Button>
-                    <h1 className="text-xl font-semibold">Scan Payment QR</h1>
-                    <div className="w-10" />
-                </div>
-            </header>
-
-            <main className="container mx-auto px-4 py-6">
-                <div className="space-y-6">
-                    {/* Camera View */}
-                    <Card>
-                        <CardContent className="p-0">
-                            <div className="relative aspect-square bg-black rounded-t-lg overflow-hidden">
-                                {scanning ? (
-                                    <video
-                                        ref={videoRef}
-                                        autoPlay
-                                        playsInline
-                                        className="w-full h-full object-cover"
-                                    />
-                                ) : (
-                                    <div className="w-full h-full flex items-center justify-center">
-                                        <Camera className="h-16 w-16 text-muted-foreground" />
-                                    </div>
-                                )}
-                                {scanning && (
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="border-2 border-primary rounded-lg w-64 h-64" />
-                                    </div>
-                                )}
-                            </div>
-                            <div className="p-4 space-y-2">
-                                <p className="text-sm text-center text-muted-foreground">
-                                    Point camera at UPA-NP QR
-                                </p>
-                                <div className="flex items-center justify-center gap-2">
-                                    <NetworkStatus />
-                                </div>
-                                <p className="text-xs text-center text-muted-foreground">
-                                    Offline verification: Ready
-                                </p>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* Actions */}
-                    <div className="space-y-2">
-                        {!scanning ? (
-                            <Button className="w-full" onClick={startScanning}>
-                                <Camera className="h-5 w-5 mr-2" />
-                                Start Scanning
-                            </Button>
-                        ) : (
-                            <Button
-                                variant="outline"
-                                className="w-full"
-                                onClick={stopScanning}
-                            >
-                                Stop Scanning
-                            </Button>
-                        )}
-                        <Button
-                            variant="secondary"
-                            className="w-full"
-                            onClick={() => {
-                                const manual = prompt("Enter QR code data:");
-                                if (manual) handleScannedData(manual);
-                            }}
-                        >
-                            Enter QR Manually
-                        </Button>
-                        <Button
-                            variant="outline"
-                            className="w-full"
-                            onClick={async () => {
-                                try {
-                                    const text = await navigator.clipboard.readText();
-                                    if (text) {
-                                        handleScannedData(text);
-                                    }
-                                } catch {
-                                    const manual = prompt("Paste QR code data:");
-                                    if (manual) handleScannedData(manual);
-                                }
-                            }}
-                        >
-                            Paste QR Data
-                        </Button>
-                    </div>
-                </div>
-            </main>
+                </CardContent>
+            </Card>
         </div>
     );
 }

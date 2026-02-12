@@ -1,322 +1,306 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useWallet } from "@/contexts/wallet-context";
-import { NetworkStatus } from "@/components/network-status";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatCurrency } from "@/lib/utils";
-import { verifySignature, createSignedPaymentRequest } from "@/lib/crypto";
-import { queueTransaction, getQueuedTransactions } from "@/lib/db";
-import { submitTransaction, syncQueuedTransactions } from "@/lib/storage";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useWallet } from "@/contexts/wallet-context";
 import { useNetwork } from "@/hooks/use-network";
-import { useToast } from "@/hooks/use-toast";
-import {
-    ArrowLeft,
-    Building2,
-    CheckCircle2,
-    Lock,
-    AlertCircle,
-} from "lucide-react";
-import Link from "next/link";
+import { verifySignature } from "@/lib/crypto";
+import { queueTransaction } from "@/lib/db";
+import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { VerificationPanel } from "@/components/verification-panel";
+import type { QRPayload, OfflineQRPayload } from "@/types";
+import { Shield, Wifi, WifiOff, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 
-export default function ConfirmPage() {
+function ConfirmContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { wallet, updateBalance, addTransaction } = useWallet();
+    const { wallet, addTransaction, updateBalance } = useWallet();
     const { online } = useNetwork();
-    const { toast } = useToast();
-    const [loading, setLoading] = useState(false);
-    const [paymentData, setPaymentData] = useState<{
-        recipient: string;
-        recipientName: string;
-        amount: number;
-        intent: string;
-        metadata?: Record<string, string>;
-        signature?: string;
-        publicKey?: string;
-    } | null>(null);
-    const [signatureVerified, setSignatureVerified] = useState(false);
-    const [verificationDetails, setVerificationDetails] = useState<{
-        signature: string;
-        publicKey: string;
-        nonce: string;
-        timestamp: number;
-    } | null>(null);
+
+    const [payload, setPayload] = useState<QRPayload | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [processing, setProcessing] = useState(false);
+    const [verified, setVerified] = useState<boolean | null>(null);
 
     useEffect(() => {
-        // Parse payment data from URL or QR
-        const qrData = searchParams.get("data");
-        const qr = searchParams.get("qr");
-        const recipient = searchParams.get("recipient");
+        const data = searchParams.get("data");
+        if (!data) {
+            setError("No payment data received");
+            return;
+        }
+        try {
+            const parsed = JSON.parse(decodeURIComponent(data)) as QRPayload;
 
-        if (qrData) {
-            try {
-                const parsed = JSON.parse(decodeURIComponent(qrData));
-                setPaymentData(parsed);
-                if (parsed.signature && parsed.publicKey) {
-                    verifyPaymentSignature(parsed);
+            // Check QR expiry (1 hour)
+            if (parsed.expiresAt) {
+                const expiresAt = new Date(parsed.expiresAt).getTime();
+                if (Date.now() > expiresAt) {
+                    setError("This QR code has expired. Please request a new one.");
+                    return;
                 }
-            } catch (err) {
-                console.error("Parse error:", err);
-                toast({
-                    variant: "destructive",
-                    title: "Invalid QR Code",
-                    description: "Could not parse payment data",
-                });
-                router.push("/pay");
             }
-        } else if (recipient) {
-            // Manual entry - create basic payment
-            setPaymentData({
-                recipient: decodeURIComponent(recipient),
-                recipientName: "Recipient",
-                amount: 0,
-                intent: "Payment",
-            });
-        }
-    }, [searchParams, router, toast]);
 
-    const verifyPaymentSignature = async (data: any) => {
-        if (!data.signature || !data.publicKey) return;
+            setPayload(parsed);
+            // Auto-verify offline payloads
+            if (parsed.type === "offline" && (parsed as OfflineQRPayload).signature) {
+                const offlinePayload = parsed as OfflineQRPayload;
+                try {
+                    const isValid = verifySignature(offlinePayload, offlinePayload.signature, offlinePayload.publicKey);
+                    setVerified(isValid);
+                } catch {
+                    setVerified(false);
+                }
+            }
+        } catch {
+            setError("Invalid payment data");
+        }
+    }, [searchParams]);
+
+    const handlePay = async () => {
+        if (!payload || !wallet) return;
+        setProcessing(true);
+        setError(null);
 
         try {
-            const payload = JSON.stringify({
-                recipient: data.recipient,
-                amount: data.amount,
-                intent: data.intent,
-                metadata: data.metadata,
-                timestamp: data.timestamp,
-                nonce: data.nonce,
-            });
-
-            const verified = await verifySignature(
-                payload,
-                data.signature,
-                data.publicKey
-            );
-            setSignatureVerified(verified);
-            setVerificationDetails({
-                signature: data.signature,
-                publicKey: data.publicKey,
-                nonce: data.nonce || "",
-                timestamp: data.timestamp || Date.now(),
-            });
-        } catch (err) {
-            console.error("Verification error:", err);
-            setSignatureVerified(false);
-        }
-    };
-
-    const handleConfirm = async () => {
-        if (!paymentData || !wallet) return;
-
-        setLoading(true);
-
-        try {
-            // Get private key from wallet (in production, use secure storage)
-            const privateKeyHex = localStorage.getItem("upa_private_key") || "";
-            if (!privateKeyHex) {
-                throw new Error("Wallet not initialized");
-            }
-            const privateKey = new Uint8Array(
-                privateKeyHex.match(/.{1,2}/g)?.map((byte) => parseInt(byte, 16)) || []
-            );
-
-            if (privateKey.length === 0) {
-                throw new Error("Wallet not initialized");
-            }
-
-            const signedRequest = await createSignedPaymentRequest(
-                {
-                    recipient: paymentData.recipient,
-                    amount: paymentData.amount,
-                    intent: paymentData.intent,
-                    metadata: paymentData.metadata,
-                },
-                privateKey
-            );
-
             if (online) {
-                // Online: Submit directly
-                await submitTransaction(signedRequest);
-                updateBalance(paymentData.amount);
+                // Online settlement
+                const res = await fetch("/api/transactions/settle", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        payerUpa: wallet.address,
+                        payload,
+                    }),
+                });
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || "Settlement failed");
+
+                const txId = result.transaction?.txId || result.txId || `UPA-${Date.now()}`;
+
+                // Deduct balance and record transaction locally
+                updateBalance(payload.amount);
+                const intentLabel = typeof payload.intent === "string" ? payload.intent : payload.intent.label || payload.intent.id;
                 addTransaction({
-                    id: `tx_${Date.now()}`,
-                    recipient: paymentData.recipient,
-                    recipientName: paymentData.recipientName,
-                    amount: paymentData.amount,
-                    intent: paymentData.intent,
-                    metadata: paymentData.metadata,
+                    id: txId,
+                    tx_id: txId,
+                    recipient: payload.upa,
+                    recipientName: payload.upa,
+                    amount: payload.amount,
+                    intent: intentLabel,
+                    intentCategory: typeof payload.intent === "string" ? "" : payload.intent.category,
+                    metadata: payload.metadata,
                     status: "settled",
+                    mode: "online",
+                    nonce: payload.nonce,
+                    timestamp: Date.now(),
+                    settledAt: Date.now(),
+                    walletProvider: "upa_pay",
+                });
+                // Also save to localStorage for admin/dashboard
+                saveLocalTransaction({
+                    id: txId,
+                    recipient: payload.upa,
+                    recipientName: payload.upa,
+                    amount: payload.amount,
+                    intent: intentLabel,
+                    metadata: payload.metadata,
+                    status: "settled",
+                    mode: "online",
+                    nonce: payload.nonce,
+                    timestamp: Date.now(),
+                    walletProvider: "upa_pay",
+                });
+
+                router.push(
+                    `/pay/success?txId=${txId}&amount=${payload.amount}&intent=${encodeURIComponent(intentLabel)}&recipient=${encodeURIComponent(payload.upa)}`
+                );
+            } else {
+                // Offline queue
+                const offlinePayload = payload as OfflineQRPayload;
+                await queueTransaction({
+                    payload: JSON.stringify(payload),
+                    signature: offlinePayload.signature || "",
+                    publicKey: offlinePayload.publicKey || "",
+                    nonce: offlinePayload.nonce || `nonce_${Date.now()}`,
+                    recipient: payload.upa,
+                    amount: payload.amount,
+                    intent: typeof payload.intent === "string" ? payload.intent : payload.intent.label || payload.intent.id,
+                    metadata: payload.metadata,
                     timestamp: Date.now(),
                 });
 
-                router.push(`/pay/success?amount=${paymentData.amount}&intent=${encodeURIComponent(paymentData.intent)}`);
-            } else {
-                // Offline: Queue for sync
-                await queueTransaction({
-                    ...signedRequest,
-                    recipient: paymentData.recipient,
-                    amount: paymentData.amount,
-                    intent: paymentData.intent,
-                    metadata: paymentData.metadata,
+                // Deduct balance and record as queued
+                updateBalance(payload.amount);
+                const intentLabel = typeof payload.intent === "string" ? payload.intent : payload.intent.label || payload.intent.id;
+                addTransaction({
+                    id: `queued_${Date.now()}`,
+                    recipient: payload.upa,
+                    recipientName: payload.upa,
+                    amount: payload.amount,
+                    intent: intentLabel,
+                    intentCategory: typeof payload.intent === "string" ? "" : payload.intent.category,
+                    metadata: payload.metadata,
+                    status: "queued",
+                    mode: "offline",
+                    nonce: offlinePayload.nonce,
+                    timestamp: Date.now(),
+                    walletProvider: "upa_pay",
+                });
+                saveLocalTransaction({
+                    id: `queued_${Date.now()}`,
+                    recipient: payload.upa,
+                    recipientName: payload.upa,
+                    amount: payload.amount,
+                    intent: intentLabel,
+                    metadata: payload.metadata,
+                    status: "queued",
+                    mode: "offline",
+                    nonce: offlinePayload.nonce,
+                    timestamp: Date.now(),
+                    walletProvider: "upa_pay",
                 });
 
-                router.push(`/pay/queued?amount=${paymentData.amount}`);
+                router.push("/pay/queued");
             }
         } catch (err: any) {
-            toast({
-                variant: "destructive",
-                title: "Payment Failed",
-                description: err.message || "An error occurred",
-            });
+            setError(err.message || "Payment failed");
         } finally {
-            setLoading(false);
+            setProcessing(false);
         }
     };
 
-    if (!paymentData) {
+    if (error && !payload) {
         return (
-            <div className="min-h-screen bg-background flex items-center justify-center">
-                <p>Loading payment details...</p>
+            <div className="p-4 md:p-6">
+                <Card className="border-danger/50">
+                    <CardContent className="p-6 text-center space-y-4">
+                        <AlertTriangle className="h-10 w-10 text-danger mx-auto" />
+                        <p className="text-danger">{error}</p>
+                        <Button variant="outline" onClick={() => router.push("/pay/scan")}>
+                            Try Again
+                        </Button>
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
+
+    if (!payload) {
+        return (
+            <div className="p-4 md:p-6 flex items-center justify-center min-h-[50vh]">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-background">
-            {/* Header */}
-            <header className="sticky top-0 z-10 border-b border-border bg-surface">
-                <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-                    <Button variant="ghost" size="icon" asChild>
-                        <Link href="/pay">
-                            <ArrowLeft className="h-5 w-5" />
-                        </Link>
-                    </Button>
-                    <h1 className="text-xl font-semibold">Confirm Payment</h1>
-                    <div className="w-10" />
-                </div>
-            </header>
+        <div className="p-4 md:p-6 space-y-6">
+            <div>
+                <h2 className="text-2xl font-semibold">Confirm Payment</h2>
+                <p className="text-sm text-muted-foreground">
+                    Review and confirm this transaction
+                </p>
+            </div>
 
-            <main className="container mx-auto px-4 py-6 space-y-6">
-                {/* Recipient Card */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="text-base">Paying to:</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 bg-primary/10 rounded-lg">
-                                <Building2 className="h-6 w-6 text-primary" />
-                            </div>
-                            <div>
-                                <p className="font-medium">{paymentData.recipientName}</p>
-                                <p className="text-sm text-muted-foreground">
-                                    {paymentData.recipient}
-                                </p>
-                            </div>
+            {/* Connection Status */}
+            <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 ${
+                online
+                    ? "bg-success/10 text-success"
+                    : "bg-warning/10 text-warning"
+            }`}>
+                {online ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+                {online ? "Online — will settle instantly" : "Offline — will queue for later"}
+            </div>
+
+            {/* Payment Details */}
+            <Card>
+                <CardHeader>
+                    <CardTitle>Payment Details</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">Recipient</span>
+                        <span className="font-mono text-sm">{payload.upa}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">Amount</span>
+                        <span className="text-2xl font-bold">NPR {payload.amount}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">Intent</span>
+                        <span className="capitalize">{payload.intent.label || payload.intent.id}</span>
+                    </div>
+                    {payload.payer_name && (
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Payer Name</span>
+                            <span>{payload.payer_name}</span>
                         </div>
-                    </CardContent>
-                </Card>
-
-                {/* Intent Details */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="text-base">Intent: {paymentData.intent}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                        {paymentData.metadata &&
-                            Object.entries(paymentData.metadata).map(([key, value]) => (
-                                <div key={key} className="flex justify-between">
-                                    <span className="text-sm text-muted-foreground capitalize">
-                                        {key.replace(/_/g, " ")}:
-                                    </span>
-                                    <span className="text-sm font-medium">{value}</span>
-                                </div>
-                            ))}
-                    </CardContent>
-                </Card>
-
-                {/* Amount */}
-                <Card>
-                    <CardContent className="p-6">
-                        <div className="text-center">
-                            <p className="text-sm text-muted-foreground mb-2">Amount</p>
-                            <p className="text-4xl font-bold">
-                                {formatCurrency(paymentData.amount)}
-                            </p>
+                    )}
+                    {payload.payer_id && (
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Payer ID</span>
+                            <span>{payload.payer_id}</span>
                         </div>
+                    )}
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">Mode</span>
+                        <span className="capitalize flex items-center gap-1">
+                            <Shield className="h-3 w-3" />
+                            {payload.type}
+                        </span>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Verification Panel for Offline Payloads */}
+            {payload.type === "offline" && (
+                <VerificationPanel
+                    signature={(payload as OfflineQRPayload).signature}
+                    publicKey={(payload as OfflineQRPayload).publicKey}
+                    nonce={payload.nonce}
+                    timestamp={Date.parse(payload.issuedAt)}
+                    verified={verified ?? false}
+                />
+            )}
+
+            {/* Error */}
+            {error && (
+                <Card className="border-danger/50 bg-danger/5">
+                    <CardContent className="p-4 text-sm text-danger">
+                        {error}
                     </CardContent>
                 </Card>
+            )}
 
-                {/* Cryptographic Verification Panel */}
-                {paymentData.signature && verificationDetails && (
-                    <VerificationPanel
-                        signature={verificationDetails.signature}
-                        publicKey={verificationDetails.publicKey}
-                        nonce={verificationDetails.nonce}
-                        timestamp={verificationDetails.timestamp}
-                        verified={signatureVerified}
-                    />
-                )}
-
-                {/* Simple Signature Status (fallback) */}
-                {paymentData.signature && !verificationDetails && (
-                    <Card>
-                        <CardContent className="p-4">
-                            <div className="flex items-center gap-2">
-                                {signatureVerified ? (
-                                    <>
-                                        <CheckCircle2 className="h-5 w-5 text-accent" />
-                                        <span className="text-sm font-medium text-accent">
-                                            Signature Verified
-                                        </span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <AlertCircle className="h-5 w-5 text-warning" />
-                                        <span className="text-sm font-medium text-warning">
-                                            Signature Verification Failed
-                                        </span>
-                                    </>
-                                )}
-                            </div>
-                            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                                <Lock className="h-3 w-3" />
-                                <span>Intent Locked — Cannot be altered after payment</span>
-                            </div>
-                        </CardContent>
-                    </Card>
-                )}
-
-                {/* Network Status */}
-                <div className="flex items-center justify-center">
-                    <NetworkStatus />
-                </div>
-
-                {/* Actions */}
-                <div className="space-y-2">
-                    <Button
-                        className="w-full h-12"
-                        onClick={handleConfirm}
-                        disabled={loading || (!online && !signatureVerified)}
-                    >
-                        {loading ? "Processing..." : "Confirm Payment"}
-                    </Button>
-                    <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => router.back()}
-                        disabled={loading}
-                    >
-                        Cancel
-                    </Button>
-                </div>
-            </main>
+            {/* Actions */}
+            <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" onClick={() => router.back()}>
+                    Cancel
+                </Button>
+                <Button
+                    className="flex-1"
+                    onClick={handlePay}
+                    disabled={processing || (payload.type === "offline" && verified === false)}
+                >
+                    {processing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {online ? "Pay Now" : "Queue Payment"}
+                </Button>
+            </div>
         </div>
+    );
+}
+
+export default function ConfirmPage() {
+    return (
+        <Suspense fallback={
+            <div className="p-4 md:p-6 flex items-center justify-center min-h-[50vh]">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+        }>
+            <ConfirmContent />
+        </Suspense>
     );
 }
 
