@@ -5,6 +5,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { AppSidebar } from "@/components/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { WalletProvider } from "@/contexts/wallet-context";
+import { ClientProviders } from "@/components/client-providers";
 
 export const metadata: Metadata = {
     title: "UPA Pay - Unified Payment Address for Nepal",
@@ -47,6 +48,7 @@ export default function RootLayout({
                     </SidebarProvider>
                 </WalletProvider>
                 <Toaster />
+                <ClientProviders />
             </body>
         </html>
     );
