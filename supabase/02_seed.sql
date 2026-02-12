@@ -321,8 +321,10 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 -- USERS (Demo Accounts — one per role)
 -- ============================================
 INSERT INTO users (id, email, password, name, role, phone, citizenship_id, upa_id) VALUES
-  -- Citizen (no UPA link)
+  -- Citizen 1 (no UPA link)
   ('c1000000-0000-0000-0000-000000000001', 'citizen@demo.np', 'citizen123', 'Ram Bahadur Thapa', 'citizen', '+9779841000001', '01-01-76-00123', NULL),
+  -- Citizen 2 (no UPA link)
+  ('c1000000-0000-0000-0000-000000000005', 'citizen2@demo.np', 'citizen123', 'Anita Gurung', 'citizen', '+9779841000005', '05-05-85-00567', NULL),
   -- Officer (linked to Traffic Police UPA)
   ('c1000000-0000-0000-0000-000000000002', 'officer@demo.np', 'officer123', 'Sita Sharma',       'officer', '+9779841000002', '02-02-80-00456', 'a1000000-0000-0000-0000-000000000001'),
   -- Merchant (linked to Lalitpur Municipality UPA)

@@ -8,6 +8,7 @@ import { SecureKeyStore } from "@/lib/secure-storage";
 // Demo users — matches supabase/02_seed.sql
 const DEMO_USERS: AppUser[] = [
     { id: "c1000000-0000-0000-0000-000000000001", email: "citizen@demo.np",  name: "Ram Bahadur Thapa", role: "citizen",  phone: "+9779841000001" },
+    { id: "c1000000-0000-0000-0000-000000000005", email: "citizen2@demo.np", name: "Anita Gurung",      role: "citizen",  phone: "+9779841000005" },
     { id: "c1000000-0000-0000-0000-000000000002", email: "officer@demo.np",  name: "Sita Sharma",       role: "officer",  phone: "+9779841000002" },
     { id: "c1000000-0000-0000-0000-000000000003", email: "merchant@demo.np", name: "Hari Prasad Oli",   role: "merchant", phone: "+9779841000003" },
     { id: "c1000000-0000-0000-0000-000000000004", email: "admin@demo.np",    name: "Gita Adhikari",     role: "admin",    phone: "+9779841000004" },
@@ -15,6 +16,7 @@ const DEMO_USERS: AppUser[] = [
 
 const DEMO_PASSWORDS: Record<string, string> = {
     "citizen@demo.np": "citizen123",
+    "citizen2@demo.np": "citizen123",
     "officer@demo.np": "officer123",
     "merchant@demo.np": "merchant123",
     "admin@demo.np": "admin123",
