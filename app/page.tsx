@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Transaction } from "@/types";
+import { RouteGuard } from "@/components/route-guard";
 import {
     ScanLine,
     ArrowRight,
@@ -20,7 +21,15 @@ import {
     WifiOff,
 } from "lucide-react";
 
-export default function CitizenHome() {
+export default function CitizenPage() {
+    return (
+        <RouteGuard allowedRoles={["citizen"]}>
+            <CitizenHome />
+        </RouteGuard>
+    );
+}
+
+function CitizenHome() {
     const router = useRouter();
     const { wallet, balance } = useWallet();
     const [upaAddress, setUpaAddress] = useState("");

@@ -6,9 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useNetwork } from "@/hooks/use-network";
+import { RouteGuard } from "@/components/route-guard";
 import { Camera, Clipboard, Keyboard, XCircle } from "lucide-react";
 
-export default function ScanPage() {
+export default function ScanPageWrapper() {
+    return (
+        <RouteGuard allowedRoles={["citizen"]}>
+            <ScanPage />
+        </RouteGuard>
+    );
+}
+
+function ScanPage() {
     const router = useRouter();
     const { online } = useNetwork();
     const [scanning, setScanning] = useState(false);

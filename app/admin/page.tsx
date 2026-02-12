@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getTransactions, Transaction } from "@/lib/storage";
 import { toast } from "sonner";
+import { RouteGuard } from "@/components/route-guard";
 import {
     TrendingUp,
     DollarSign,
@@ -30,7 +31,15 @@ import {
     RefreshCw,
 } from "lucide-react";
 
-export default function AdminDashboard() {
+export default function AdminPageWrapper() {
+    return (
+        <RouteGuard allowedRoles={["admin"]}>
+            <AdminDashboard />
+        </RouteGuard>
+    );
+}
+
+function AdminDashboard() {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<"all" | "settled" | "pending" | "failed">("all");

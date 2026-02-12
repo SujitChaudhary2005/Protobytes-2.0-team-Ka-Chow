@@ -2,6 +2,33 @@
 // UPA-NP Shared Types (PRD-Aligned)
 // ============================================
 
+// === User & Role Types ===
+export type UserRole = "citizen" | "officer" | "merchant" | "admin";
+
+export interface AppUser {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  phone?: string;
+  citizenship_id?: string;
+  upa_id?: string;
+}
+
+// === Merchant Profile (citizen → merchant registration) ===
+export interface MerchantProfile {
+  id: string;
+  businessName: string;
+  businessType: string;
+  ward: string;
+  address: string;
+  phone: string;
+  panNumber: string;          // PAN/VAT registration number
+  upaAddress: string;         // generated merchant UPA e.g. "himalayan-cafe@merchant.np"
+  registeredAt: number;
+  ownerId: string;            // user ID of the citizen who registered
+}
+
 // === QR Payload Types (The Innovation) ===
 
 // Static QR — generated once, reused forever

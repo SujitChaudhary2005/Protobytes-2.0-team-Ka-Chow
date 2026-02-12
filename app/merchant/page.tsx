@@ -8,6 +8,9 @@ import { QRCodeDisplay } from "@/components/qr-code";
 import { toast } from "sonner";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Transaction } from "@/types";
+import { RouteGuard } from "@/components/route-guard";
+import { useWallet } from "@/contexts/wallet-context";
+import { MerchantRegistration } from "@/components/merchant-registration";
 import {
     QrCode,
     Download,
@@ -33,7 +36,29 @@ import {
 } from "@/components/ui/select";
 import type { UPA, StaticQRPayload } from "@/types";
 
-export default function MerchantPage() {
+export default function MerchantPageWrapper() {
+    return (
+        <RouteGuard allowedRoles={["citizen", "merchant"]}>
+            <MerchantPage />
+        </RouteGuard>
+    );
+}
+
+function MerchantPage() {
+    const { role, merchantProfile } = useWallet();
+    const [registered, setRegistered] = useState(false);
+
+    // Citizens need to register first; dedicated merchant accounts skip registration
+    const needsRegistration = role === "citizen" && !merchantProfile && !registered;
+
+    if (needsRegistration) {
+        return <MerchantRegistration onRegistered={() => setRegistered(true)} />;
+    }
+
+    return <MerchantDashboard />;
+}
+
+function MerchantDashboard() {
     const [upas, setUpas] = useState<UPA[]>([]);
     const [selectedUpa, setSelectedUpa] = useState<UPA | null>(null);
     const [selectedIntentCode, setSelectedIntentCode] = useState<string>("");

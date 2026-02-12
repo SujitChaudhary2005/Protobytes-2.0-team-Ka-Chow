@@ -8,6 +8,7 @@ import { QRCodeDisplay } from "@/components/qr-code";
 import { toast } from "sonner";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Transaction } from "@/types";
+import { RouteGuard } from "@/components/route-guard";
 import {
     QrCode,
     Download,
@@ -31,7 +32,15 @@ import {
 } from "@/components/ui/select";
 import type { UPA, StaticQRPayload } from "@/types";
 
-export default function OfficerPage() {
+export default function OfficerPageWrapper() {
+    return (
+        <RouteGuard allowedRoles={["officer"]}>
+            <OfficerPage />
+        </RouteGuard>
+    );
+}
+
+function OfficerPage() {
     const [upas, setUpas] = useState<UPA[]>([]);
     const [selectedUpa, setSelectedUpa] = useState<UPA | null>(null);
     const [selectedIntentCode, setSelectedIntentCode] = useState<string>("");
