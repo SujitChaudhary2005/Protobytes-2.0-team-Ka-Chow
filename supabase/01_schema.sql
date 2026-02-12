@@ -110,7 +110,25 @@ CREATE INDEX idx_intents_upa  ON intents(upa_id);
 CREATE INDEX idx_upas_address ON upas(address);
 
 -- ============================================
--- STEP 4: Enable Realtime
+-- STEP 4: Users & Roles
+-- ============================================
+CREATE TABLE users (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email       VARCHAR(255) UNIQUE NOT NULL,
+    password    VARCHAR(255) NOT NULL,        -- plain text for hackathon demo only
+    name        VARCHAR(255) NOT NULL,
+    role        VARCHAR(20)  NOT NULL CHECK (role IN ('citizen','officer','merchant','admin')),
+    phone       VARCHAR(20),
+    citizenship_id VARCHAR(20),
+    upa_id      UUID REFERENCES upas(id),
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_role  ON users(role);
+
+-- ============================================
+-- STEP 5: Enable Realtime
 -- ============================================
 ALTER PUBLICATION supabase_realtime ADD TABLE transactions;
 ALTER PUBLICATION supabase_realtime ADD TABLE sync_queue;
@@ -127,3 +145,6 @@ CREATE POLICY "Allow all access to upas"         ON upas         FOR ALL USING (
 CREATE POLICY "Allow all access to intents"      ON intents      FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to transactions" ON transactions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to sync_queue"   ON sync_queue   FOR ALL USING (true) WITH CHECK (true);
+
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to users"        ON users        FOR ALL USING (true) WITH CHECK (true);

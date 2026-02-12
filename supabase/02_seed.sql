@@ -316,3 +316,16 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
   ('UPA-2026-00055', 'a1000000-0000-0000-0000-000000000005', 'b1000000-0000-0000-0000-000000000010', 15000, 'Sajha Yatayat',  'RP-SAJHA-001', 'settled', 'online',
     '{"route": "Kathmandu - Bhaktapur", "vehicleNumber": "BA 1 KHA 1234", "permitDuration": "1 Year"}',
     'n-00055', NOW() - INTERVAL '2 hours 10 minutes', NOW() - INTERVAL '2 hours 8 minutes');
+
+-- ============================================
+-- USERS (Demo Accounts — one per role)
+-- ============================================
+INSERT INTO users (id, email, password, name, role, phone, citizenship_id, upa_id) VALUES
+  -- Citizen (no UPA link)
+  ('c1000000-0000-0000-0000-000000000001', 'citizen@demo.np', 'citizen123', 'Ram Bahadur Thapa', 'citizen', '+9779841000001', '01-01-76-00123', NULL),
+  -- Officer (linked to Traffic Police UPA)
+  ('c1000000-0000-0000-0000-000000000002', 'officer@demo.np', 'officer123', 'Sita Sharma',       'officer', '+9779841000002', '02-02-80-00456', 'a1000000-0000-0000-0000-000000000001'),
+  -- Merchant (linked to Lalitpur Municipality UPA)
+  ('c1000000-0000-0000-0000-000000000003', 'merchant@demo.np', 'merchant123', 'Hari Prasad Oli', 'merchant', '+9779841000003', '03-03-82-00789', 'a1000000-0000-0000-0000-000000000003'),
+  -- Admin (linked to Dept of Revenue)
+  ('c1000000-0000-0000-0000-000000000004', 'admin@demo.np',    'admin123',    'Gita Adhikari',   'admin',    '+9779841000004', '04-04-78-01234', 'a1000000-0000-0000-0000-000000000002');
