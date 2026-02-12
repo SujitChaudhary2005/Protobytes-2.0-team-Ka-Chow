@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { WalletProvider } from "@/contexts/wallet-context";
 import { ClientProviders } from "@/components/client-providers";
 import { AppShell } from "@/components/app-shell";
+
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
     title: "UPA Pay - Unified Payment Address for Nepal",
@@ -24,7 +27,7 @@ export default function RootLayout({
                 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
                 <link rel="apple-touch-icon" href="/icons/icon-192.png" />
             </head>
-            <body className="font-sans antialiased" suppressHydrationWarning>
+            <body className={`${inter.className} antialiased`} suppressHydrationWarning>
                 <WalletProvider>
                     <AppShell>
                         {children}
