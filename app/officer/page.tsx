@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { QRCodeDisplay } from "@/components/qr-code";
+import { QRCodeDisplay, uploadQRToStorage } from "@/components/qr-code";
 import { toast } from "sonner";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Transaction } from "@/types";
@@ -49,6 +49,8 @@ function OfficerPage() {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<"qr" | "collections">("qr");
+    const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+    const [uploading, setUploading] = useState(false);
 
     const selectedIntent = selectedUpa?.intents.find((i) => i.intent_code === selectedIntentCode) || null;
 
@@ -135,7 +137,19 @@ function OfficerPage() {
             payload.max_amount = selectedIntent.max_amount!;
         }
         setQrData(JSON.stringify(payload));
+        setQrImageUrl(null);
         toast.success("QR Code Generated");
+    };
+
+    const handleQRRendered = async (dataUrl: string) => {
+        if (!selectedUpa || !selectedIntent) return;
+        setUploading(true);
+        const url = await uploadQRToStorage(dataUrl, selectedUpa.address, selectedIntent.intent_code);
+        if (url) {
+            setQrImageUrl(url);
+            toast.success("QR saved to cloud storage");
+        }
+        setUploading(false);
     };
 
     const handleCopyQR = async () => {
@@ -288,7 +302,7 @@ function OfficerPage() {
                             {qrData ? (
                                 <div className="space-y-4">
                                     <div id="qr-canvas" className="flex flex-col items-center p-6 bg-white rounded-lg border">
-                                        <QRCodeDisplay value={qrData} size={260} />
+                                        <QRCodeDisplay value={qrData} size={260} onRendered={handleQRRendered} />
                                         <div className="mt-4 text-center">
                                             <p className="font-semibold text-foreground">{selectedUpa?.entity_name}</p>
                                             <p className="text-sm text-muted-foreground">{selectedIntent?.label}</p>
@@ -298,6 +312,13 @@ function OfficerPage() {
                                             <p className="text-xs text-muted-foreground mt-2 font-mono">{selectedUpa?.address}</p>
                                         </div>
                                     </div>
+                                    {uploading && <p className="text-xs text-muted-foreground text-center">Saving to cloud...</p>}
+                                    {qrImageUrl && (
+                                        <div className="text-center space-y-1">
+                                            <p className="text-xs text-success">✓ Stored in cloud</p>
+                                            <a href={qrImageUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary underline break-all">Open QR Image</a>
+                                        </div>
+                                    )}
                                     <div className="flex gap-2">
                                         <Button variant="outline" className="flex-1" size="sm" onClick={handleDownloadQR}>
                                             <Download className="h-4 w-4 mr-1.5" /> Download
