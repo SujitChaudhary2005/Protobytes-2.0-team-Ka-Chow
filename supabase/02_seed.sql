@@ -11,7 +11,8 @@ INSERT INTO upas (id, address, entity_name, entity_type, public_key) VALUES
   ('a1000000-0000-0000-0000-000000000002', 'revenue@lalitpur.gov.np', 'Lalitpur Metropolitan City',     'government',  NULL),
   ('a1000000-0000-0000-0000-000000000003', 'fee@tribhuvan.edu.np',    'Tribhuvan University',           'institution', NULL),
   ('a1000000-0000-0000-0000-000000000004', 'ward5@kathmandu.gov.np',  'Kathmandu Ward 5 Office',        'government',  NULL),
-  ('a1000000-0000-0000-0000-000000000005', 'license@dotm.gov.np',    'Dept. of Transport Management',  'government',  NULL);
+  ('a1000000-0000-0000-0000-000000000005', 'license@dotm.gov.np',    'Dept. of Transport Management',  'government',  NULL)
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================
 -- Intents (10 Payment Templates)
@@ -71,7 +72,8 @@ INSERT INTO intents (id, intent_code, category, label, description, amount_type,
   ('b1000000-0000-0000-0000-000000000010', 'route_permit', 'fee', 'Route Permit Fee',
     'Public transport route permit', 'fixed', 15000, NULL, NULL,
     '{"route": {"type": "string", "label": "Route", "required": true}, "vehicleNumber": {"type": "string", "label": "Vehicle Number", "required": true}, "permitDuration": {"type": "string", "label": "Permit Duration", "required": true}}',
-    'a1000000-0000-0000-0000-000000000005');
+    'a1000000-0000-0000-0000-000000000005')
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================
 -- Transactions (55 Realistic Entries)
@@ -137,7 +139,8 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00015', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 1000, 'Binod Adhikari',    'LIC-QRS-5555', 'queued',  'offline',
     '{"violation": "Signal Jump", "vehicle": "BA 15 KHA 9999", "location": "Jawalakhel", "license": "QRS-5555"}',
-    'n-00015', NOW() - INTERVAL '10 minutes', NULL);
+    'n-00015', NOW() - INTERVAL '10 minutes', NULL)
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── License Fees (5 transactions) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
@@ -159,7 +162,8 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00020', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000002', 1000, 'Sanjay Gurung',  'APP-LIC-7788', 'settled', 'online',
     '{"licenseType": "Four Wheeler", "category": "Renewal"}',
-    'n-00020', NOW() - INTERVAL '1 hour 15 minutes', NOW() - INTERVAL '1 hour 13 minutes');
+    'n-00020', NOW() - INTERVAL '1 hour 15 minutes', NOW() - INTERVAL '1 hour 13 minutes')
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── Property Tax (10 transactions) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
@@ -201,7 +205,8 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00030', 'a1000000-0000-0000-0000-000000000002', 'b1000000-0000-0000-0000-000000000003', 14000, 'Gopal Bhattarai',   'PROP-LAL-4410', 'settled', 'online',
     '{"ward": "14", "fiscalYear": "2082/83", "areaSqft": "2200", "lotNumber": "LAL-4410"}',
-    'n-00030', NOW() - INTERVAL '1 hour 50 minutes', NOW() - INTERVAL '1 hour 48 minutes');
+    'n-00030', NOW() - INTERVAL '1 hour 50 minutes', NOW() - INTERVAL '1 hour 48 minutes')
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── Business Registration (3 transactions) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
@@ -215,7 +220,8 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00033', 'a1000000-0000-0000-0000-000000000002', 'b1000000-0000-0000-0000-000000000004', 5000, 'Arjun Tamang',    'BIZ-REG-003', 'queued',  'offline',
     '{"businessName": "Everest Trekking", "businessType": "Tourism", "ward": "7"}',
-    'n-00033', NOW() - INTERVAL '1 hour 40 minutes', NULL);
+    'n-00033', NOW() - INTERVAL '1 hour 40 minutes', NULL)
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── Tuition Fees (8 transactions) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
@@ -249,7 +255,8 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00041', 'a1000000-0000-0000-0000-000000000003', 'b1000000-0000-0000-0000-000000000005', 25000, 'Kiran Bista',      'STU-TU-2024-2123', 'settled', 'online',
     '{"program": "BSc CSIT", "semester": "5th", "studentId": "TU-2024-2123"}',
-    'n-00041', NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '43 minutes');
+    'n-00041', NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '43 minutes')
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── Exam Fees (5 transactions) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
@@ -271,7 +278,8 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00046', 'a1000000-0000-0000-0000-000000000003', 'b1000000-0000-0000-0000-000000000006', 2500, 'Kiran Bista',    'STU-TU-2024-2123', 'settled', 'online',
     '{"program": "BSc CSIT", "semester": "5th", "studentId": "TU-2024-2123"}',
-    'n-00046', NOW() - INTERVAL '35 minutes', NOW() - INTERVAL '33 minutes');
+    'n-00046', NOW() - INTERVAL '35 minutes', NOW() - INTERVAL '33 minutes')
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── Birth Certificate Fees (3 transactions) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
@@ -285,7 +293,8 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00049', 'a1000000-0000-0000-0000-000000000004', 'b1000000-0000-0000-0000-000000000007', 200, 'Dil Bahadur',     'BC-W5-003', 'settled', 'online',
     '{"childName": "Nischal Tamang", "dob": "2082-11-03", "parentName": "Dil Bahadur Tamang"}',
-    'n-00049', NOW() - INTERVAL '1 hour 40 minutes', NOW() - INTERVAL '1 hour 38 minutes');
+    'n-00049', NOW() - INTERVAL '1 hour 40 minutes', NOW() - INTERVAL '1 hour 38 minutes')
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── Recommendation Letters (2 transactions) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
@@ -295,7 +304,8 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00051', 'a1000000-0000-0000-0000-000000000004', 'b1000000-0000-0000-0000-000000000008', 500, 'Kabita Bhandari',  'REC-W5-002', 'queued',  'offline',
     '{"purpose": "Bank Loan", "documentType": "Recommendation Letter"}',
-    'n-00051', NOW() - INTERVAL '2 hours 40 minutes', NULL);
+    'n-00051', NOW() - INTERVAL '2 hours 40 minutes', NULL)
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── Vehicle Registration (3 transactions) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
@@ -309,13 +319,15 @@ INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id
 
   ('UPA-2026-00054', 'a1000000-0000-0000-0000-000000000005', 'b1000000-0000-0000-0000-000000000009', 15000, 'Naresh Gurung',  'VEH-REG-003', 'queued',  'offline',
     '{"vehicleType": "Scooter", "manufacturer": "Honda", "model": "Dio"}',
-    'n-00054', NOW() - INTERVAL '1 hour 10 minutes', NULL);
+    'n-00054', NOW() - INTERVAL '1 hour 10 minutes', NULL)
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ── Route Permit (1 transaction) ──
 INSERT INTO transactions (tx_id, upa_id, intent_id, amount, payer_name, payer_id, status, mode, metadata, nonce, issued_at, settled_at) VALUES
   ('UPA-2026-00055', 'a1000000-0000-0000-0000-000000000005', 'b1000000-0000-0000-0000-000000000010', 15000, 'Sajha Yatayat',  'RP-SAJHA-001', 'settled', 'online',
     '{"route": "Kathmandu - Bhaktapur", "vehicleNumber": "BA 1 KHA 1234", "permitDuration": "1 Year"}',
-    'n-00055', NOW() - INTERVAL '2 hours 10 minutes', NOW() - INTERVAL '2 hours 8 minutes');
+    'n-00055', NOW() - INTERVAL '2 hours 10 minutes', NOW() - INTERVAL '2 hours 8 minutes')
+ON CONFLICT (tx_id) DO NOTHING;
 
 -- ============================================
 -- USERS (Demo Accounts — one per role)
@@ -330,4 +342,5 @@ INSERT INTO users (id, email, password, name, role, phone, citizenship_id, upa_i
   -- Merchant (linked to Lalitpur Municipality UPA)
   ('c1000000-0000-0000-0000-000000000003', 'merchant@demo.np', 'merchant123', 'Hari Prasad Oli', 'merchant', '+9779841000003', '03-03-82-00789', 'a1000000-0000-0000-0000-000000000003'),
   -- Admin (linked to Dept of Revenue)
-  ('c1000000-0000-0000-0000-000000000004', 'admin@demo.np',    'admin123',    'Gita Adhikari',   'admin',    '+9779841000004', '04-04-78-01234', 'a1000000-0000-0000-0000-000000000002');
+  ('c1000000-0000-0000-0000-000000000004', 'admin@demo.np',    'admin123',    'Gita Adhikari',   'admin',    '+9779841000004', '04-04-78-01234', 'a1000000-0000-0000-0000-000000000002')
+ON CONFLICT (id) DO NOTHING;
