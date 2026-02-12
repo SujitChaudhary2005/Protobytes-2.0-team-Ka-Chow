@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import QRCode from "qrcode";
 
 interface QRCodeProps {
@@ -13,28 +13,38 @@ interface QRCodeProps {
 
 export function QRCodeDisplay({ value, size = 256, className, onRendered }: QRCodeProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const onRenderedRef = useRef(onRendered);
+    const lastUploadedValue = useRef<string | null>(null);
+
+    // Keep the ref up to date without triggering the effect
+    onRenderedRef.current = onRendered;
 
     useEffect(() => {
         if (canvasRef.current && value) {
             QRCode.toCanvas(canvasRef.current, value, {
                 width: size,
                 margin: 2,
-                errorCorrectionLevel: "H",   // highest correction → most scannable
+                errorCorrectionLevel: "H",
                 color: {
                     dark: "#000000",
                     light: "#FFFFFF",
                 },
             })
                 .then(() => {
-                    if (canvasRef.current && onRendered) {
-                        onRendered(canvasRef.current.toDataURL("image/png"));
+                    if (
+                        canvasRef.current &&
+                        onRenderedRef.current &&
+                        lastUploadedValue.current !== value
+                    ) {
+                        lastUploadedValue.current = value;
+                        onRenderedRef.current(canvasRef.current.toDataURL("image/png"));
                     }
                 })
                 .catch((err) => {
                     console.error("QR generation error:", err);
                 });
         }
-    }, [value, size, onRendered]);
+    }, [value, size]);
 
     if (!value) return null;
 

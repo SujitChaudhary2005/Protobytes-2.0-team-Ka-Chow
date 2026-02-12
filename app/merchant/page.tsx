@@ -360,7 +360,7 @@ function MerchantDashboard() {
                                             <p className="text-xs text-muted-foreground mt-2 font-mono">{selectedUpa?.address}</p>
                                         </div>
                                     </div>
-                                    {uploading && <p className="text-xs text-muted-foreground text-center">Saving to cloud...</p>}
+                                    {uploading && !qrImageUrl && <p className="text-xs text-muted-foreground text-center">Saving to cloud...</p>}
                                     {qrImageUrl && (
                                         <div className="text-center space-y-1">
                                             <p className="text-xs text-success">✓ Stored in cloud</p>
