@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --background: 250 250 250;
+        --foreground: 17 24 39;
+        --card: 255 255 255;
+        --card-foreground: 17 24 39;
+        --primary: 37 99 235;
+        --primary-foreground: 255 255 255;
+        --accent: 16 185 129;
+        --accent-foreground: 255 255 255;
+        --warning: 245 158 11;
+        --warning-foreground: 255 255 255;
+        --danger: 239 68 68;
+        --danger-foreground: 255 255 255;
+        --border: 229 231 235;
+        --input: 229 231 235;
+        --ring: 37 99 235;
+        --muted: 107 114 128;
+        --muted-foreground: 17 24 39;
+    }
+
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background;
+        color: rgb(var(--foreground));
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        @apply font-semibold;
+    }
+
+    code,
+    pre {
+        font-family: 'JetBrains Mono', monospace;
+    }
+}
+
+@layer utilities {
+    .text-balance {
+        text-wrap: balance;
+    }
+}
