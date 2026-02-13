@@ -71,7 +71,7 @@ const SOLUTIONS = [
     },
 ];
 
-export default function DemoPage() {
+export default function LandingPage() {
     const router = useRouter();
     const [step, setStep] = useState(0); // 0: problem, 1: solution, 2: action
     const [animatedProblems, setAnimatedProblems] = useState<number[]>([]);
@@ -269,19 +269,19 @@ export default function DemoPage() {
                                 Back
                             </Button>
                             <Button className="flex-1 h-12 text-base" onClick={() => setStep(2)}>
-                                Try the Demo <ArrowRight className="h-4 w-4 ml-2" />
+                                Get Started <ArrowRight className="h-4 w-4 ml-2" />
                             </Button>
                         </div>
                     </div>
                 )}
 
-                {/* STEP 2: Demo Launcher */}
+                {/* STEP 2: Role Selection */}
                 {step === 2 && (
                     <div className="space-y-8 animate-in fade-in duration-500">
                         <div className="text-center space-y-3">
                             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium mb-2">
                                 <Globe className="h-3.5 w-3.5" />
-                                LIVE DEMO
+                                GET STARTED
                             </div>
                             <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
                                 Experience

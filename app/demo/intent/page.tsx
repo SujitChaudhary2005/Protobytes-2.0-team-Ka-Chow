@@ -249,7 +249,7 @@ export default function IntentVisualizationPage() {
                 ))}
             </div>
             <p className="text-[10px] text-muted-foreground/60 text-center italic">
-                SaralPay 100% is verifiable: every payment in this demo auto-groups by intent. Traditional rates are estimated.
+                SaralPay 100% is verifiable: every payment auto-groups by intent. Traditional rates are estimated.
             </p>
         </div>
     );

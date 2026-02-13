@@ -48,7 +48,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
                 router.push(ROLE_ROUTES[role] || "/");
             }
         } else {
-            toast.error("Invalid credentials. Try citizen@demo.np / citizen123");
+            toast.error("Invalid credentials. Please check your email and password.");
         }
     };
 
@@ -69,7 +69,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
                                 <Input
                                     id="email"
                                     type="email"
-                                    placeholder="citizen@demo.np"
+                                    placeholder="you@gov.np"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     required
@@ -95,7 +95,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
 
                             <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">
                                 <span className="relative z-10 bg-background px-2 text-muted-foreground">
-                                    Demo Accounts
+                                    Quick Access
                                 </span>
                             </div>
 

@@ -60,10 +60,13 @@ import {
     BarChart3,
     DollarSign,
 } from "lucide-react";
+import { OfflineToggle } from "@/components/offline-toggle";
+import { useNetwork } from "@/hooks/use-network";
 
 export function CitizenHome() {
     const router = useRouter();
-    const { wallet, balance, nid, linkedBank, offlineWallet, saralPayBalance, transactions: walletTransactions, user } = useWallet();
+    const { wallet, balance, nid, linkedBank, offlineWallet, saralPayBalance, transactions: walletTransactions, user, addTransaction, updateBalance, canSpendOffline, spendFromSaralPay } = useWallet();
+    const { online } = useNetwork();
     useAutoSync(!!wallet, offlineWallet);
     const [upaAddress, setUpaAddress] = useState("");
     const [mounted, setMounted] = useState(false);
@@ -251,6 +254,12 @@ export function CitizenHome() {
 
     return (
         <div className="p-4 md:p-6 space-y-5">
+            {/* Network Toggle */}
+            <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold">Dashboard</h2>
+                <OfflineToggle />
+            </div>
+
             {/* Balance Card */}
             <Card className="bg-gradient-to-br from-blue-600 to-blue-700 text-white border-0">
                 <CardContent className="p-5">
@@ -300,15 +309,23 @@ export function CitizenHome() {
                 </CardContent>
             </Card>
 
-            {/* Payment Methods Grid — 4 buttons */}
+            {/* Payment Methods Grid */}
             <div className="grid grid-cols-2 gap-3">
                 <Button
                     variant="outline"
                     className="h-20 flex-col gap-1.5 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700"
-                    onClick={() => router.push("/pay/scan")}
+                    onClick={() => router.push("/pay?mode=qr")}
                 >
                     <ScanLine className="h-5 w-5 text-blue-600" />
-                    <span className="text-xs font-medium text-gray-700">Scan QR</span>
+                    <span className="text-xs font-medium text-gray-700">QR Payment</span>
+                </Button>
+                <Button
+                    variant="outline"
+                    className="h-20 flex-col gap-1.5 hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700"
+                    onClick={() => router.push("/pay?mode=nfc")}
+                >
+                    <Smartphone className="h-5 w-5 text-purple-600" />
+                    <span className="text-xs font-medium text-gray-700">NFC Payment</span>
                 </Button>
                 <Button
                     variant="outline"
@@ -326,15 +343,55 @@ export function CitizenHome() {
                     <Zap className="h-5 w-5 text-amber-600" />
                     <span className="text-xs font-medium text-gray-700">Pay Bills</span>
                 </Button>
-                <Button
-                    variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 col-span-2"
-                    onClick={() => router.push("/pay/offline")}
-                >
-                    <WifiOff className="h-5 w-5 text-rose-600" />
-                    <span className="text-xs font-medium text-gray-700">Offline Payment (Scan)</span>
-                </Button>
             </div>
+
+            {/* Quick Pay — simulate common payments without camera */}
+            <Card>
+                <CardContent className="p-3 space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Quick Pay</p>
+                    <div className="grid grid-cols-2 gap-2">
+                        {[
+                            { label: "Traffic Fine", upa: "traffic@nepal.gov", entity: "Nepal Traffic Police", intent: "traffic_fine", cat: "fine", amount: 500, icon: Car },
+                            { label: "Electricity Bill", upa: "billing@nea.gov.np", entity: "Nepal Electricity Authority", intent: "electricity_bill", cat: "bill_payment", amount: 1200, icon: Zap },
+                            { label: "Water Bill", upa: "billing@khanepani.gov.np", entity: "Kathmandu Upatyaka Khanepani", intent: "water_bill", cat: "bill_payment", amount: 350, icon: Droplets },
+                            { label: "Property Tax", upa: "revenue@kathmandu.gov.np", entity: "Kathmandu Metropolitan", intent: "property_tax", cat: "tax", amount: 2500, icon: Landmark },
+                        ].map((item) => (
+                            <Button
+                                key={item.intent}
+                                variant="outline"
+                                size="sm"
+                                className="h-10 text-xs justify-start gap-2"
+                                onClick={() => {
+                                    const payload = {
+                                        version: "1.0",
+                                        upa: item.upa,
+                                        entity_name: item.entity,
+                                        intent: { id: item.intent, category: item.cat, label: item.label },
+                                        amount_type: "fixed",
+                                        amount: item.amount,
+                                        currency: "NPR",
+                                        metadata_schema: {},
+                                    };
+                                    router.push(`/pay/confirm?data=${encodeURIComponent(JSON.stringify(payload))}&method=qr`);
+                                }}
+                            >
+                                <item.icon className="h-3.5 w-3.5 shrink-0" />
+                                {item.label}
+                            </Button>
+                        ))}
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Offline Payment */}
+            <Button
+                variant="outline"
+                className="w-full h-12 gap-2 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700"
+                onClick={() => router.push("/pay/offline")}
+            >
+                <WifiOff className="h-5 w-5 text-rose-600" />
+                <span className="text-sm font-medium text-gray-700">Cross-Device Offline Payment</span>
+            </Button>
 
             {/* UPA Direct Pay */}
             <Card>

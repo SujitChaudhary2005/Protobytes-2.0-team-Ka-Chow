@@ -29,7 +29,7 @@ function OfflinePayContent() {
                 <div className="flex-1">
                     <h1 className="text-lg font-bold">Offline {mode === "pay" ? "Payment (C2C)" : "Request"}</h1>
                     <p className="text-xs text-muted-foreground">
-                        {mode === "pay" ? "Citizen to Citizen - Scan or use Demo Mode" : "Show QR to receive"} without internet
+                        {mode === "pay" ? "Citizen to Citizen - Scan or use Quick Pay" : "Show QR to receive"} without internet
                     </p>
                 </div>
                 <Badge

@@ -17,7 +17,7 @@ export function OfflineToggle({ className, onToggle }: OfflineToggleProps) {
     const handleToggle = useCallback(() => {
         const newState = !online;
 
-        // Override navigator.onLine for demo purposes
+        // Override navigator.onLine for testing purposes
         if (typeof window !== "undefined") {
             Object.defineProperty(navigator, "onLine", {
                 writable: true,

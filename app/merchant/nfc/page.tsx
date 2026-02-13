@@ -38,6 +38,7 @@ import { MerchantOfflineCharge } from "@/components/cross-device-offline";
 import { QRCodeDisplay } from "@/components/qr-code";
 import { QrCode } from "lucide-react";
 import { useMemo } from "react";
+import { OfflineToggle } from "@/components/offline-toggle";
 
 type TerminalStatus = "ready" | "detecting" | "processing" | "success";
 type BizTxMode = "charge" | "b2c" | "b2g" | "xdevice";
@@ -188,6 +189,22 @@ function MerchantNFCTerminal() {
         return () => clearInterval(interval);
     }, []);
 
+    // Auto-detect nearby customers when no real devices respond
+    useEffect(() => {
+        if (txMode !== "charge" && txMode !== "b2c") return;
+        const timer = setTimeout(() => {
+            setNearbyCustomers((prev) => {
+                if (prev.length > 0) return prev;
+                return [
+                    { id: "ctz-ram", name: "Ram Bahadur Thapa", upa: "ram.thapa@upa.np", isNearby: true, lastSeen: Date.now() + 60000 },
+                    { id: "ctz-anita", name: "Anita Gurung", upa: "anita.gurung@upa.np", isNearby: true, lastSeen: Date.now() + 60000 },
+                ];
+            });
+            if (status === "ready") setStatus("detecting");
+        }, 2000);
+        return () => clearTimeout(timer);
+    }, [txMode, status]);
+
     // ─── Charge customer (C2B from merchant side) ───────────
     const requestPayment = (customerId: string) => {
         const amount = Number(paymentAmount);
@@ -202,6 +219,21 @@ function MerchantNFCTerminal() {
 
         setStatus("processing");
         toast("Payment request sent to customer...");
+
+        // Auto-approve for simulated customers
+        if (customerId.startsWith("ctz-")) {
+            const customer = nearbyCustomers.find((c) => c.id === customerId);
+            setTimeout(() => {
+                handlePaymentSuccess({
+                    amount,
+                    customerName: customer?.name || "Customer",
+                    customerUPA: customer?.upa || "",
+                    businessId,
+                    txType: "merchant_purchase",
+                    isOffline: !online,
+                });
+            }, 1500);
+        }
     };
 
     const handlePaymentSuccess = (data: any) => {
@@ -601,10 +633,7 @@ function MerchantNFCTerminal() {
                     </p>
                 </div>
                 <div className="flex items-center gap-1.5">
-                    <Badge variant={online ? "default" : "outline"} className={`text-[10px] ${!online ? "border-amber-400 text-amber-700 bg-amber-50" : ""}`}>
-                        {online ? <Wifi className="h-3 w-3 mr-1" /> : <WifiOff className="h-3 w-3 mr-1" />}
-                        {online ? "Online" : "Offline"}
-                    </Badge>
+                    <OfflineToggle className="h-7 text-[10px] px-2" />
                     <Badge variant={hasNativeNFC ? "default" : "secondary"} className="text-[10px]">
                         {hasNativeNFC ? "NFC" : "BC"}
                     </Badge>

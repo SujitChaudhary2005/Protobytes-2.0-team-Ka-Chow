@@ -32,7 +32,7 @@ import {
 import { toast } from "sonner";
 
 /* ================================================================
-   MERCHANT — NFC Offline Demo
+   MERCHANT — NFC Offline Payment Terminal
    ================================================================
    Two transport modes for data exchange:
    1. Web NFC (NDEFReader) — tap phones together (Android Chrome)
@@ -43,7 +43,7 @@ import { toast } from "sonner";
 type Step = "setup" | "waiting" | "receipt" | "complete";
 type Transport = "nfc" | "qr";
 
-export default function BusinessNFCDemo() {
+export default function BusinessNFCTerminal() {
     const [step, setStep] = useState<Step>("setup");
     const [transport, setTransport] = useState<Transport>("qr");
     const [nfcSupported, setNfcSupported] = useState(false);

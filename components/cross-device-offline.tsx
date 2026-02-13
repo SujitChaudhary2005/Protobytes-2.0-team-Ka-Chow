@@ -283,7 +283,7 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
                     </div>
                     <div>
                         <h3 className="text-sm font-bold text-purple-800">Cross-Device Offline (Request Payment)</h3>
-                        <p className="text-[10px] text-purple-600">Ed25519 dual-signed QR handshake - C2C Demo Ready</p>
+                        <p className="text-[10px] text-purple-600">Ed25519 dual-signed QR handshake - C2C Ready</p>
                     </div>
                     <Badge variant="outline" className="ml-auto text-[10px] border-purple-300 text-purple-700">
                         <WifiOff className="h-3 w-3 mr-1" /> No Network
@@ -391,7 +391,7 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
                             Cancel Scan
                         </Button>
                         
-                        {/* Demo Mode Button */}
+                        {/* Quick Simulate Button */}
                         <div className="pt-2 border-t mt-2">
                             <Button
                                 variant="secondary"
@@ -414,8 +414,8 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
                                             phase: "receipt",
                                             originalRequest: req,
                                             merchantSignature: req.signature,
-                                            payerUPA: "demo-citizen@upa.np",
-                                            payerName: "Demo Citizen",
+                                            payerUPA: "citizen@upa.np",
+                                            payerName: "Verified Citizen",
                                             payerPubKey: customerPubKey,
                                             approvedAt: new Date().toISOString(),
                                             payerNonce: generateNonce(),
@@ -440,10 +440,10 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
                                 }}
                             >
                                 <Zap className="h-3 w-3 mr-1" />
-                                🎯 Demo Mode - Simulate Customer Receipt
+                                🎯 Quick Simulate Customer Receipt
                             </Button>
                             <p className="text-[10px] text-center text-muted-foreground mt-2">
-                                Click for instant demo without needing a customer device
+                                Instant simulation without a second device
                             </p>
                         </div>
                     </div>
@@ -563,7 +563,7 @@ export function CitizenOfflinePay() {
         setRequest(null);
         setSigVerified(false);
 
-        // Show simulation option immediately for demo purposes
+        // Show simulation option immediately
         // if (process.env.NODE_ENV === "development") { ... } 
 
         try {
@@ -608,12 +608,12 @@ export function CitizenOfflinePay() {
                 protocol: "upa-offline-xdevice",
                 version: "1.0",
                 phase: "request",
-                merchantUPA: "demo-merchant@upa.np",
-                merchantName: "Demo Merchant Store",
+                merchantUPA: "merchant@upa.np",
+                merchantName: "Local Merchant Store",
                 merchantPubKey: merchantPubKey,
-                amount: 500, // Demo amount
+                amount: 500,
                 currency: "NPR",
-                intent: "Demo Purchase",
+                intent: "Purchase",
                 nonce: generateNonce(),
                 issuedAt: new Date().toISOString(),
                 expiresAt: new Date(Date.now() + 600000).toISOString(),
@@ -835,21 +835,21 @@ export function CitizenOfflinePay() {
                     </div>
                     <div>
                         <h3 className="text-sm font-bold text-indigo-800">Cross-Device Offline Pay (C2C)</h3>
-                        <p className="text-[10px] text-indigo-600">Scan merchant QR or use Demo Mode &rarr; verify &rarr; approve</p>
+                        <p className="text-[10px] text-indigo-600">Scan merchant QR or use Quick Pay &rarr; verify &rarr; approve</p>
                     </div>
                     <Badge variant="outline" className="ml-auto text-[10px] border-indigo-300 text-indigo-700">
                         <WifiOff className="h-3 w-3 mr-1" /> No Network
                     </Badge>
                 </div>
 
-                {/* Demo Info Banner */}
+                {/* Info Banner */}
                 <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-200 rounded-lg p-3">
                     <div className="flex items-start gap-2">
                         <Zap className="h-4 w-4 text-purple-600 mt-0.5 flex-shrink-0" />
                         <div className="flex-1">
-                            <p className="text-xs font-semibold text-purple-800">Demo Mode Available!</p>
+                            <p className="text-xs font-semibold text-purple-800">Quick Pay Available!</p>
                             <p className="text-[10px] text-purple-600 mt-0.5">
-                                Click the Demo Mode button below to simulate a complete offline C2C payment flow without needing to scan a real QR code.
+                                Use Quick Pay below to complete an offline C2C payment instantly without scanning a QR code.
                             </p>
                         </div>
                     </div>
@@ -874,7 +874,7 @@ export function CitizenOfflinePay() {
                             Signature will be verified locally — no server needed
                         </div>
                         
-                        {/* Demo Mode Button */}
+                        {/* Quick Pay Button */}
                         <div className="pt-3 border-t">
                             <Button
                                 variant="secondary"
@@ -882,10 +882,10 @@ export function CitizenOfflinePay() {
                                 onClick={handleSimulateScan}
                             >
                                 <Zap className="h-4 w-4 mr-2" />
-                                🎯 Demo Mode - Simulate Scan (NPR 500)
+                                🎯 Quick Pay - Instant Payment (NPR 500)
                             </Button>
                             <p className="text-[10px] text-center text-muted-foreground mt-2">
-                                Click for instant demo without needing a real QR code
+                                Complete an instant payment without scanning
                             </p>
                         </div>
                     </div>

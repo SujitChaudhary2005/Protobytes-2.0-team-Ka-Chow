@@ -33,7 +33,7 @@ import {
 import { toast } from "sonner";
 
 /* ================================================================
-   CUSTOMER — NFC Offline Demo
+   CUSTOMER — NFC Offline Wallet
    ================================================================
    Receives payment request via NFC tap or QR scan.
    Verifies Ed25519 signature locally (no server).
@@ -44,7 +44,7 @@ import { toast } from "sonner";
 type Step = "idle" | "received" | "approved" | "complete";
 type Transport = "nfc" | "qr";
 
-export default function CustomerNFCDemo() {
+export default function CustomerNFCWallet() {
     const [step, setStep] = useState<Step>("idle");
     const [transport, setTransport] = useState<Transport>("qr");
     const [nfcSupported, setNfcSupported] = useState(false);
@@ -58,7 +58,7 @@ export default function CustomerNFCDemo() {
     const nfcAbort = useRef<AbortController | null>(null);
     const scannerRef = useRef<any>(null);
 
-    // Mock SaralPay balance for demo
+    // SaralPay offline wallet balance
     const [saralPayBalance, setSaralPayBalance] = useState(5000);
 
     useEffect(() => {

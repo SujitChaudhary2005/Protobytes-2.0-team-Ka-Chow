@@ -27,8 +27,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-// All demo contacts — filtered later based on current user
-const ALL_DEMO_CONTACTS = [
+// All contacts — filtered later based on current user
+const ALL_CONTACTS = [
     { name: "Ram Thapa", upa: "ram@upa.np", icon: "ram" },
     { name: "Anita Gurung", upa: "anita@upa.np", icon: "anita" },
     { name: "Sita Sharma", upa: "sita@upa.np", icon: "sita" },

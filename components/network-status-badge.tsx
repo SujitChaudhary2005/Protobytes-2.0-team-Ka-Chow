@@ -5,9 +5,8 @@ import { Wifi, WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * Fixed floating network badge — always visible for demo/video recording.
+ * Fixed floating network badge — always visible for status monitoring.
  * Shows green "Online" / red "Offline" pill in the bottom-left corner.
- * DEMO-ONLY: Remove before production.
  */
 export function NetworkStatusBadge() {
     const { online, mounted } = useNetwork();

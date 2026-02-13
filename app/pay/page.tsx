@@ -51,6 +51,7 @@ import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { queueTransaction } from "@/lib/db";
 import { executeACIDTransaction } from "@/lib/acid-transaction";
 import { createSignalChannel } from "@/lib/nfc-signal";
+import { OfflineToggle } from "@/components/offline-toggle";
 import type { UPA } from "@/types";
 
 type PaymentMode = "qr" | "nfc";
@@ -560,6 +561,39 @@ function PayPage() {
             }, 800);
         }
 
+        // Auto-detect for C2B: simulate nearby merchant terminals
+        if (txMode === "c2b") {
+            setTimeout(() => {
+                setNearbyDevices((prev) => {
+                    const existing = prev.filter((d) => d.type === "merchant");
+                    if (existing.length > 0) return prev;
+                    const simMerchants: DetectedDevice[] = [
+                        { id: "biz-himalayan-java", name: "Himalayan Java Coffee", type: "merchant", upa: "shop@himalayanjava.np", lastSeen: Date.now() },
+                        { id: "biz-bhatbhateni", name: "Bhatbhateni Supermarket", type: "merchant", upa: "pay@bhatbhateni.np", lastSeen: Date.now() },
+                        { id: "biz-ncell", name: "Ncell Topup Center", type: "merchant", upa: "topup@ncell.np", lastSeen: Date.now() },
+                    ];
+                    return [...prev, ...simMerchants];
+                });
+                setNfcStatus("found");
+            }, 1200);
+        }
+
+        // Auto-detect for C2C: simulate nearby citizens
+        if (txMode === "c2c") {
+            setTimeout(() => {
+                setNearbyDevices((prev) => {
+                    const existing = prev.filter((d) => d.type === "citizen");
+                    if (existing.length > 0) return prev;
+                    const simCitizens: DetectedDevice[] = [
+                        { id: "ctz-anita", name: "Anita Gurung", type: "citizen", upa: "anita.gurung@upa.np", lastSeen: Date.now() },
+                        { id: "ctz-bikash", name: "Bikash Tamang", type: "citizen", upa: "bikash.tamang@upa.np", lastSeen: Date.now() },
+                    ];
+                    return [...prev, ...simCitizens];
+                });
+                setNfcStatus("found");
+            }, 1200);
+        }
+
         if (hasNativeNFC && "NDEFReader" in window) {
             try {
                 const NDEFReaderClass = (window as any).NDEFReader;
@@ -824,10 +858,7 @@ function PayPage() {
                             Unverified
                         </Badge>
                     )}
-                    <Badge variant={online ? "default" : "outline"} className={`text-xs ${!online ? "border-amber-400 text-amber-700 bg-amber-50" : ""}`}>
-                        {online ? <Wifi className="h-3 w-3 mr-1" /> : <WifiOff className="h-3 w-3 mr-1" />}
-                        {online ? "Online" : "Offline"}
-                    </Badge>
+                    <OfflineToggle className="h-7 text-[10px] px-2" />
                 </div>
             </div>
 
