@@ -388,7 +388,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem(uKey("upa_linked_bank"), JSON.stringify(bank));
     }, []);
 
-    // ── Computed SaralPay balance ──
     const saralPayBalance = offlineWallet.balance;
 
     /**
