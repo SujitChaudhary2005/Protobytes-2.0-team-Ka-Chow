@@ -35,9 +35,11 @@ UPA-NP is a unified payment intelligence layer that transforms raw money transfe
 |-------|-----------|
 | **Frontend** | Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui |
 | **Backend** | Next.js API Routes + Server Actions |
-| **Database** | LocalStorage (IndexedDB via Dexie.js) |
+| **Database** | Supabase (PostgreSQL) — primary; LocalStorage/Dexie.js — offline fallback |
+| **Realtime** | Supabase Realtime (Postgres Changes) for live dashboard updates |
 | **Cryptography** | @noble/ed25519 (Ed25519 signing & verification) |
-| **Offline Storage** | Dexie.js (IndexedDB) |
+| **Offline Storage** | Dexie.js (IndexedDB) — queued transactions, auto-syncs when online |
+| **Replay Protection** | Nonce UNIQUE constraint at DB level + API-level 409 enforcement |
 | **QR Code** | qrcode (generation) |
 | **State Management** | React Context API |
 | **Deployment** | Vercel |
@@ -72,7 +74,19 @@ The app will be running at `http://localhost:3000`
 
 ### Environment Variables
 
-No environment variables required for local development. The app uses localStorage for data persistence.
+Copy `.env.example` to `.env.local` and fill in your values:
+
+```bash
+cp .env.example .env.local
+```
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `NEXT_PUBLIC_SUPABASE_URL` | For Supabase mode | Your Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | For Supabase mode | Your Supabase anon/public key |
+| `NEXT_PUBLIC_DEMO_MODE` | No (defaults `true`) | `true` = open RLS, `false` = require auth |
+
+> **No env vars?** The app automatically falls back to **localStorage/Dexie.js mock mode** — no Supabase needed for local development.
 
 ---
 
