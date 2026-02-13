@@ -241,8 +241,8 @@ function AdminDashboard() {
     const [chartTimeRange, setChartTimeRange] = useState("90d");
 
     const chartConfig: ChartConfig = {
-        settled: { label: "Settled", color: "var(--chart-1)" },
-        pending: { label: "Pending", color: "var(--chart-3)" },
+        settled: { label: "Settled", color: "hsl(var(--chart-1))" },
+        pending: { label: "Pending", color: "hsl(var(--chart-3))" },
     };
 
     const chartData = useMemo(() => {

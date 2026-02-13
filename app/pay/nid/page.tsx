@@ -42,7 +42,9 @@ export default function NIDPaymentPage() {
 type ScanState = "idle" | "camera" | "scanning" | "verified" | "error";
 type PaySource = "bank" | "esewa" | "khalti";
 
-const MOCK_WALLETS: Record<string, { name: string; id: string; balance: number; color: string; icon: string }> = {
+type WalletInfo = { name: string; id: string; balance: number; color: string; icon: string };
+
+const INITIAL_MOCK_WALLETS: Record<string, WalletInfo> = {
     esewa: { name: "eSewa", id: "9841-XXXXX-12", balance: 12500, color: "bg-green-500", icon: "#60BB46" },
     khalti: { name: "Khalti", id: "9812-XXXXX-98", balance: 8200, color: "bg-purple-600", icon: "#5C2D91" },
 };
@@ -60,6 +62,7 @@ function NIDPayment() {
     const [paying, setPaying] = useState(false);
     const [mounted, setMounted] = useState(false);
     const [paySource, setPaySource] = useState<PaySource>("bank");
+    const [mockWallets, setMockWallets] = useState<Record<string, WalletInfo>>(() => structuredClone(INITIAL_MOCK_WALLETS));
 
     useEffect(() => { setMounted(true); }, []);
 
@@ -73,8 +76,6 @@ function NIDPayment() {
         setScanState("scanning");
         setIsLoading(true);
         toast.info(`Detected: ${nidNumber}`);
-        // Add a small delay to show "processing" state
-        await new Promise(r => setTimeout(r, 500));
         await verifyNID(nidNumber);
     };
 
@@ -110,17 +111,37 @@ function NIDPayment() {
             toast.dismiss("nid-verify");
 
             if (data.success && data.nid) {
-                // Simulate database lookup delay for realism
-                await new Promise(r => setTimeout(r, 300));
-                
-                const linked = linkNID(data.nid.nidNumber);
+                // Build a full NIDCard from API response and pass it directly to linkNID.
+                // This avoids discarding the server data and re-looking up from mock.
+                const apiNid: NIDCard = {
+                    nidNumber: data.nid.nidNumber,
+                    fullName: data.nid.fullName,
+                    dateOfBirth: data.nid.dateOfBirth,
+                    gender: data.nid.gender || "M",
+                    issueDate: data.nid.issueDate,
+                    expiryDate: data.nid.expiryDate,
+                    photoUrl: data.nid.photoUrl || "",
+                    district: data.nid.district || "",
+                    isActive: data.nid.isActive ?? true,
+                    linkedUPA: data.nid.linkedUPA || null,
+                    linkedBanks: (data.nid.linkedBanks || []).map((b: any) => ({
+                        id: b.id || "",
+                        bankName: b.bankName || "",
+                        accountNumber: b.accountNumber || "",
+                        accountType: b.accountType || "savings",
+                        isPrimary: b.isPrimary ?? false,
+                        linkedVia: "nid" as const,
+                    })),
+                };
+
+                const linked = linkNID(apiNid);
                 if (linked) {
                     setVerifiedNID(linked);
                     setScanState("verified");
                     toast.success(`✓ Verified: ${data.nid.fullName}`, { duration: 3000 });
                 } else {
                     setScanState("error");
-                    toast.error("NID not in local database");
+                    toast.error("NID linking failed");
                 }
             } else {
                 setScanState("error");
@@ -146,7 +167,7 @@ function NIDPayment() {
 
         // Validate balance for digital wallets
         if (paySource !== "bank") {
-            const w = MOCK_WALLETS[paySource];
+            const w = mockWallets[paySource];
             if (amt > w.balance) {
                 toast.error(`Insufficient ${w.name} balance (NPR ${w.balance.toLocaleString()})`);
                 return;
@@ -160,7 +181,7 @@ function NIDPayment() {
         try {
             const sourceName = paySource === "bank"
                 ? linkedBank?.bankName || "Bank"
-                : MOCK_WALLETS[paySource].name;
+                : mockWallets[paySource].name;
             const sourceType = paySource === "bank" ? "nid_bank" : paySource;
 
             // Build payload for API settlement
@@ -198,8 +219,11 @@ function NIDPayment() {
             if (paySource === "bank") {
                 deductFromBank(amt);
             } else {
-                // Mock deduction from digital wallet
-                MOCK_WALLETS[paySource].balance -= amt;
+                // Immutable state update for digital wallet balance
+                setMockWallets(prev => ({
+                    ...prev,
+                    [paySource]: { ...prev[paySource], balance: prev[paySource].balance - amt },
+                }));
             }
             updateBalance(amt);
 
@@ -407,7 +431,7 @@ function NIDPayment() {
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium">eSewa</p>
-                                    <p className="text-xs text-muted-foreground">ID: {MOCK_WALLETS.esewa.id} &middot; Bal: NPR {MOCK_WALLETS.esewa.balance.toLocaleString()}</p>
+                                    <p className="text-xs text-muted-foreground">ID: {mockWallets.esewa.id} &middot; Bal: NPR {mockWallets.esewa.balance.toLocaleString()}</p>
                                 </div>
                                 {paySource === "esewa" && <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />}
                             </button>
@@ -424,7 +448,7 @@ function NIDPayment() {
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium">Khalti</p>
-                                    <p className="text-xs text-muted-foreground">ID: {MOCK_WALLETS.khalti.id} &middot; Bal: NPR {MOCK_WALLETS.khalti.balance.toLocaleString()}</p>
+                                    <p className="text-xs text-muted-foreground">ID: {mockWallets.khalti.id} &middot; Bal: NPR {mockWallets.khalti.balance.toLocaleString()}</p>
                                 </div>
                                 {paySource === "khalti" && <CheckCircle2 className="h-5 w-5 text-purple-600 shrink-0" />}
                             </button>
@@ -476,14 +500,14 @@ function NIDPayment() {
                                 <p className={`font-medium ${
                                     paySource === "bank" ? "text-blue-700" : paySource === "esewa" ? "text-green-700" : "text-purple-700"
                                 }`}>
-                                    Source: {paySource === "bank" ? linkedBank?.bankName : MOCK_WALLETS[paySource].name}
+                                    Source: {paySource === "bank" ? linkedBank?.bankName : mockWallets[paySource].name}
                                 </p>
                                 <p className={`mt-1 ${
                                     paySource === "bank" ? "text-blue-600" : paySource === "esewa" ? "text-green-600" : "text-purple-600"
                                 }`}>
                                     {paySource === "bank"
                                         ? `${linkedBank?.accountNumber} → Bank debit`
-                                        : `${MOCK_WALLETS[paySource].id} → Wallet debit (Bal: NPR ${MOCK_WALLETS[paySource].balance.toLocaleString()})`
+                                        : `${mockWallets[paySource].id} → Wallet debit (Bal: NPR ${mockWallets[paySource].balance.toLocaleString()})`
                                     }
                                 </p>
                             </div>
@@ -499,7 +523,7 @@ function NIDPayment() {
                                     <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Processing...</>
                                 ) : (
                                     <>
-                                        Pay via {paySource === "bank" ? "Bank" : MOCK_WALLETS[paySource].name} <ArrowRight className="h-4 w-4 ml-2" />
+                                        Pay via {paySource === "bank" ? "Bank" : mockWallets[paySource].name} <ArrowRight className="h-4 w-4 ml-2" />
                                     </>
                                 )}
                             </Button>

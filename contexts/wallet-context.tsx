@@ -74,7 +74,7 @@ interface WalletContextType {
     logout: () => void;
     registerMerchant: (profile: Omit<MerchantProfile, "id" | "upaAddress" | "registeredAt" | "ownerId">) => MerchantProfile;
     // New actions
-    linkNID: (nidNumber: string) => NIDCard | null;
+    linkNID: (nidOrNumber: string | NIDCard) => NIDCard | null;
     linkBank: (bank: BankAccount) => void;
     // SaralPay Wallet actions
     loadSaralPay: (amount: number) => boolean;
@@ -364,20 +364,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }, [user]);
 
     /**
-     * Link National ID — look up in mock database
+     * Link National ID — accepts a full NIDCard object (from API) or a string to look up locally.
+     * When the API returns a verified NID, pass the full object to avoid discarding server data.
      */
-    const linkNID = useCallback((nidNumber: string): NIDCard | null => {
-        const found = MOCK_NID_DATABASE.find(n => n.nidNumber === nidNumber);
-        if (!found) return null;
-        setNid(found);
-        localStorage.setItem(uKey("upa_nid"), JSON.stringify(found));
+    const linkNID = useCallback((nidOrNumber: string | NIDCard): NIDCard | null => {
+        let nidCard: NIDCard | null = null;
+
+        if (typeof nidOrNumber === "string") {
+            // Fallback: look up in mock database by NID number
+            nidCard = MOCK_NID_DATABASE.find(n => n.nidNumber === nidOrNumber) || null;
+        } else {
+            // Use the full NIDCard object directly (from API/Supabase)
+            nidCard = nidOrNumber;
+        }
+
+        if (!nidCard) return null;
+
+        setNid(nidCard);
+        localStorage.setItem(uKey("upa_nid"), JSON.stringify(nidCard));
         // Auto-link primary bank
-        if (found.linkedBanks.length > 0) {
-            const primary = found.linkedBanks.find(b => b.isPrimary) || found.linkedBanks[0];
+        if (nidCard.linkedBanks.length > 0) {
+            const primary = nidCard.linkedBanks.find(b => b.isPrimary) || nidCard.linkedBanks[0];
             setLinkedBank(primary);
             localStorage.setItem(uKey("upa_linked_bank"), JSON.stringify(primary));
         }
-        return found;
+        return nidCard;
     }, []);
 
     /**
