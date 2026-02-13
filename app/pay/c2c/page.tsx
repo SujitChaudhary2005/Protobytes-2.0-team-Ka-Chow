@@ -74,7 +74,7 @@ function C2CPayment() {
 
     const senderUPA = nid?.linkedUPA || user?.upa_id || "unknown@upa.np";
     // Filter contacts: exclude the current user's UPA
-    const DEMO_CONTACTS = ALL_DEMO_CONTACTS.filter(c => c.upa !== senderUPA);
+    const DEMO_CONTACTS = ALL_CONTACTS.filter(c => c.upa !== senderUPA);
 
     const handleSend = async () => {
         const amt = Number(amount);
