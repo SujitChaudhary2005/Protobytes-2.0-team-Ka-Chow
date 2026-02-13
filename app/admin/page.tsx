@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,12 +61,7 @@ function AdminDashboard() {
     const [lookupFilter, setLookupFilter] = useState<"all" | "settled" | "pending" | "failed">("all");
     const [hasSearched, setHasSearched] = useState(false);
 
-    useEffect(() => {
-        const load = async () => { setLoading(true); await loadTransactions(); setLoading(false); };
-        load();
-    }, []);
-
-    const loadTransactions = async () => {
+    const loadTransactions = useCallback(async () => {
         try {
             const res = await fetch("/api/transactions");
             if (res.ok) {
@@ -92,7 +87,39 @@ function AdminDashboard() {
             }
         } catch { /* ignore */ }
         try { setTransactions(getTransactions()); } catch { /* ignore */ }
-    };
+    }, []);
+
+    // Initial load
+    useEffect(() => {
+        const load = async () => { setLoading(true); await loadTransactions(); setLoading(false); };
+        load();
+    }, [loadTransactions]);
+
+    // Auto-refresh: listen for settlement events + poll every 10s
+    useEffect(() => {
+        // React to `upa-transactions-updated` dispatched by auto-sync hook
+        const onTxUpdate = () => {
+            loadTransactions();
+        };
+        window.addEventListener("upa-transactions-updated", onTxUpdate);
+
+        // Also react to storage events (cross-tab sync)
+        const onStorage = (e: StorageEvent) => {
+            if (e.key?.includes("upa_transactions")) {
+                loadTransactions();
+            }
+        };
+        window.addEventListener("storage", onStorage);
+
+        // Fallback polling every 10s for Supabase-backed data
+        const interval = setInterval(loadTransactions, 10_000);
+
+        return () => {
+            window.removeEventListener("upa-transactions-updated", onTxUpdate);
+            window.removeEventListener("storage", onStorage);
+            clearInterval(interval);
+        };
+    }, [loadTransactions]);
 
     const filteredTransactions = transactions.filter((tx) => {
         if (filter !== "all" && tx.status !== filter) return false;
@@ -622,7 +649,7 @@ function AdminDashboard() {
                                                     <p className="font-medium text-sm">{tx.intent}</p>
                                                     {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
                                                         : tx.status === "pending" || tx.status === "queued" ? <Clock className="h-3.5 w-3.5 text-warning shrink-0" />
-                                                        : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
+                                                            : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
                                                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tx.status === "settled" ? "bg-success/10 text-success" : tx.status === "pending" || tx.status === "queued" ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger"}`}>{tx.status}</span>
                                                 </div>
                                                 <p className="text-xs text-muted-foreground truncate">{tx.recipientName || tx.recipient}</p>
