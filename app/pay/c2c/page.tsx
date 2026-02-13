@@ -14,6 +14,7 @@ import { SecureKeyStore } from "@/lib/secure-storage";
 import { queueTransaction } from "@/lib/db";
 import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { C2C_INTENTS } from "@/types";
+import { UPA_TO_USER } from "@/contexts/wallet-context";
 import {
     Users,
     ArrowRight,
@@ -26,11 +27,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-// Quick contacts for demo
-const DEMO_CONTACTS = [
+// All demo contacts — filtered later based on current user
+const ALL_DEMO_CONTACTS = [
+    { name: "Ram Thapa", upa: "ram@upa.np", icon: "ram" },
+    { name: "Anita Gurung", upa: "anita@upa.np", icon: "anita" },
     { name: "Sita Sharma", upa: "sita@upa.np", icon: "sita" },
     { name: "Hari Prasad", upa: "hari@upa.np", icon: "hari" },
-    { name: "Ram Thapa", upa: "ram@upa.np", icon: "ram" },
 ];
 
 export default function C2CPaymentPage() {
@@ -43,7 +45,7 @@ export default function C2CPaymentPage() {
 
 function C2CPayment() {
     const router = useRouter();
-    const { balance, updateBalance, addTransaction, user, nid, wallet, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit } = useWallet();
+    const { balance, updateBalance, addTransaction, user, nid, wallet, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit, creditUser } = useWallet();
     const { online } = useNetwork();
     const [toUPA, setToUPA] = useState("");
     const [amount, setAmount] = useState("");
@@ -54,7 +56,9 @@ function C2CPayment() {
 
     useEffect(() => { setMounted(true); }, []);
 
-    const senderUPA = nid?.linkedUPA || "ram@upa.np";
+    const senderUPA = nid?.linkedUPA || user?.upa_id || "unknown@upa.np";
+    // Filter contacts: exclude the current user's UPA
+    const DEMO_CONTACTS = ALL_DEMO_CONTACTS.filter(c => c.upa !== senderUPA);
 
     const handleSend = async () => {
         const amt = Number(amount);
@@ -98,12 +102,12 @@ function C2CPayment() {
 
                 if (data.success) {
                     updateBalance(amt);
-                    addTransaction({
+                    const senderTx: any = {
                         id: data.transaction.txId,
                         tx_id: data.transaction.txId,
                         tx_type: "c2c",
                         recipient: toUPA,
-                        recipientName: DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
+                        recipientName: ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
                         fromUPA: senderUPA,
                         amount: amt,
                         intent: intentLabel,
@@ -117,11 +121,12 @@ function C2CPayment() {
                         settledAt: Date.now(),
                         walletProvider: "upa_pay",
                         metadata: { fromUPA: senderUPA, toUPA, intent: selectedIntent, message },
-                    });
+                    };
+                    addTransaction(senderTx);
                     saveLocalTransaction({
                         id: data.transaction.txId,
                         recipient: toUPA,
-                        recipientName: DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
+                        recipientName: ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
                         amount: amt,
                         intent: intentLabel,
                         metadata: { fromUPA: senderUPA, toUPA, intent: selectedIntent, message },
@@ -132,9 +137,16 @@ function C2CPayment() {
                         walletProvider: "upa_pay",
                     });
 
+                    // Credit the receiver's wallet & transaction history
+                    creditUser(toUPA, amt, {
+                        ...senderTx,
+                        recipientName: user?.name || senderUPA,
+                        recipient: senderUPA,
+                    });
+
                     toast.success(`Sent ${formatCurrency(amt)} to ${toUPA}`);
                     setTimeout(() => {
-                        const recipientName = DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA;
+                        const recipientName = ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA;
                         toast.info(`${recipientName} received ${formatCurrency(amt)} for: ${intentLabel}`);
                     }, 2000);
 
@@ -191,12 +203,12 @@ function C2CPayment() {
                 const queuedTxId = `queued_${Date.now()}`;
                 updateBalance(amt);
                 consumeOfflineLimit(amt);
-                addTransaction({
+                const offlineTx: any = {
                     id: queuedTxId,
                     tx_id: queuedTxId,
                     tx_type: "c2c",
                     recipient: toUPA,
-                    recipientName: DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
+                    recipientName: ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
                     fromUPA: senderUPA,
                     amount: amt,
                     intent: intentLabel,
@@ -209,11 +221,12 @@ function C2CPayment() {
                     timestamp: Date.now(),
                     walletProvider: "upa_pay",
                     metadata: { fromUPA: senderUPA, toUPA, intent: selectedIntent, message },
-                });
+                };
+                addTransaction(offlineTx);
                 saveLocalTransaction({
                     id: queuedTxId,
                     recipient: toUPA,
-                    recipientName: DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
+                    recipientName: ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
                     amount: amt,
                     intent: intentLabel,
                     metadata: { fromUPA: senderUPA, toUPA, intent: selectedIntent, message },
@@ -222,6 +235,14 @@ function C2CPayment() {
                     nonce,
                     timestamp: Date.now(),
                     walletProvider: "upa_pay",
+                });
+
+                // Credit the receiver (even for queued, balances will reflect)
+                creditUser(toUPA, amt, {
+                    ...offlineTx,
+                    recipientName: user?.name || senderUPA,
+                    recipient: senderUPA,
+                    status: "queued",
                 });
 
                 toast.info(`Transfer queued offline — will settle when online`);
@@ -243,7 +264,7 @@ function C2CPayment() {
     }
 
     return (
-        <div className="p-4 md:p-6 space-y-5 max-w-lg mx-auto">
+        <div className="p-4 md:p-6 space-y-5">
             <div className="flex items-center gap-3 mb-2">
                 <Button variant="ghost" size="sm" onClick={() => router.back()}>← Back</Button>
                 <h1 className="text-lg font-bold">Send to Friend</h1>
@@ -261,8 +282,8 @@ function C2CPayment() {
                     <CardTitle className="text-sm">Quick Contacts</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="flex gap-3">
-                        {DEMO_CONTACTS.filter(c => c.upa !== senderUPA).map((contact) => (
+                    <div className="flex gap-3 overflow-x-auto">
+                        {DEMO_CONTACTS.map((contact) => (
                             <button
                                 key={contact.upa}
                                 onClick={() => setToUPA(contact.upa)}

@@ -83,7 +83,7 @@ function OfflineSettings() {
     }
 
     return (
-        <div className="p-4 md:p-6 space-y-5 max-w-lg mx-auto">
+        <div className="p-4 md:p-6 space-y-5">
             <div className="flex items-center gap-3 mb-2">
                 <Button variant="ghost" size="sm" onClick={() => router.back()}>← Back</Button>
                 <h1 className="text-lg font-bold">Offline Spending Limits</h1>

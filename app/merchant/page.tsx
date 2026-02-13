@@ -27,7 +27,9 @@ import {
     CreditCard,
     PieChart,
     Receipt,
+    Smartphone,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import {
     Select,
     SelectContent,
@@ -60,6 +62,7 @@ function MerchantPage() {
 }
 
 function MerchantDashboard() {
+    const router = useRouter();
     const [upas, setUpas] = useState<UPA[]>([]);
     const [selectedUpa, setSelectedUpa] = useState<UPA | null>(null);
     const [selectedIntentCode, setSelectedIntentCode] = useState<string>("");
@@ -235,12 +238,15 @@ function MerchantDashboard() {
             </div>
 
             {/* Tab Switcher */}
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
                 <Button variant={activeTab === "overview" ? "default" : "outline"} size="sm" onClick={() => setActiveTab("overview")}>
                     <CreditCard className="h-4 w-4 mr-1.5" /> Sales & Payments
                 </Button>
                 <Button variant={activeTab === "qr" ? "default" : "outline"} size="sm" onClick={() => setActiveTab("qr")}>
                     <QrCode className="h-4 w-4 mr-1.5" /> Payment QR
+                </Button>
+                <Button variant="outline" size="sm" className="border-purple-300 text-purple-700 hover:bg-purple-50" onClick={() => router.push("/merchant/nfc")}>
+                    <Smartphone className="h-4 w-4 mr-1.5" /> NFC Terminal
                 </Button>
             </div>
 

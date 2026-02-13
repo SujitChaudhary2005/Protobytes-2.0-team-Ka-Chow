@@ -132,11 +132,6 @@ interface BaseQRPayload {
   issuedAt: string;
   expiresAt: string;
   nonce: string;
-  geofence?: {
-    lat: number;
-    lng: number;
-    radiusMeters: number;
-  };
 }
 
 export interface OnlineQRPayload extends BaseQRPayload {
@@ -199,7 +194,7 @@ export interface Transaction {
   intentCategory?: string;
   metadata?: Record<string, string>;
   status: "pending" | "settled" | "failed" | "queued" | "syncing";
-  mode: "online" | "offline" | "nfc";
+  mode: "online" | "offline" | "nfc" | "camera";
   payment_source?: PaymentSource;
   bank_name?: string;
   signature?: string;
@@ -289,7 +284,7 @@ export const MOCK_NID_DATABASE: NIDCard[] = [
     dateOfBirth: "1990-05-15",
     issueDate: "2020-01-01",
     expiryDate: "2030-01-01",
-    photoUrl: "/mock-nid/ram.jpg",
+    photoUrl: "RAM-KTM-1990-4521", // Just store NID number, will fetch from Supabase
     district: "Kathmandu",
     isActive: true,
     linkedUPA: "ram@upa.np",
@@ -303,7 +298,7 @@ export const MOCK_NID_DATABASE: NIDCard[] = [
     dateOfBirth: "1995-08-22",
     issueDate: "2021-03-15",
     expiryDate: "2031-03-15",
-    photoUrl: "/mock-nid/sita.jpg",
+    photoUrl: "SITA-PKR-1995-7832",
     district: "Pokhara",
     isActive: true,
     linkedUPA: "sita@upa.np",
@@ -317,12 +312,40 @@ export const MOCK_NID_DATABASE: NIDCard[] = [
     dateOfBirth: "1988-12-10",
     issueDate: "2019-06-20",
     expiryDate: "2029-06-20",
-    photoUrl: "/mock-nid/hari.jpg",
+    photoUrl: "HARI-LTP-1988-3214",
     district: "Lalitpur",
     isActive: true,
     linkedUPA: "hari@upa.np",
     linkedBanks: [
       { id: "bank_3", bankName: "NIC Asia Bank", accountNumber: "****6677", accountType: "savings", isPrimary: true, linkedVia: "nid" },
+    ],
+  },
+  {
+    nidNumber: "ANITA-BRT-1998-5643",
+    fullName: "Anita Gurung",
+    dateOfBirth: "1998-03-12",
+    issueDate: "2022-06-15",
+    expiryDate: "2032-06-15",
+    photoUrl: "ANITA-BRT-1998-5643",
+    district: "Bharatpur",
+    isActive: true,
+    linkedUPA: "anita@upa.np",
+    linkedBanks: [
+      { id: "bank_5", bankName: "Himalayan Bank", accountNumber: "****7845", accountType: "savings", isPrimary: true, linkedVia: "nid" },
+    ],
+  },
+  {
+    nidNumber: "123-456-789",
+    fullName: "Tyler Durden",
+    dateOfBirth: "1979-12-18",
+    issueDate: "2024-12-18",
+    expiryDate: "2034-12-18",
+    photoUrl: "/mock-nid/tyler.png",
+    district: "Kathmandu",
+    isActive: true,
+    linkedUPA: "tyler@upa.np",
+    linkedBanks: [
+      { id: "bank_4", bankName: "Himalayan Bank", accountNumber: "****2341", accountType: "savings", isPrimary: true, linkedVia: "nid" },
     ],
   },
 ];

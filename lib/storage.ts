@@ -2,18 +2,27 @@
 
 export interface Transaction {
   id: string;
+  tx_id?: string;
+  tx_type?: string;
   recipient: string;
   recipientName?: string;
+  fromUPA?: string;
   amount: number;
   intent: string;
+  intentCategory?: string;
   metadata?: Record<string, string>;
-  status: "pending" | "settled" | "failed" | "queued";
+  status: "pending" | "settled" | "failed" | "queued" | "syncing";
   signature?: string;
   publicKey?: string;
   timestamp: number;
+  settledAt?: number;
+  syncedAt?: number;
   nonce?: string;
   walletProvider?: string;
-  mode?: "online" | "offline";
+  mode?: "online" | "offline" | "nfc" | "camera";
+  payment_source?: string;
+  bank_name?: string;
+  message?: string;
 }
 
 export interface PaymentRequest {

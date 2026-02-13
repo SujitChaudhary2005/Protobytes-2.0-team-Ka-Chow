@@ -58,7 +58,11 @@ export function useAutoSync() {
                 return;
             }
 
-            toast.info(`Syncing ${items.length} queued payment${items.length > 1 ? "s" : ""}...`);
+            // Show dramatic syncing toast
+            const syncToastId = toast.loading(
+                `🔄 Connection restored! Syncing ${items.length} queued payment${items.length > 1 ? "s" : ""}...`,
+                { duration: 10000 }
+            );
 
             const payments = items.map((item) => ({
                 qrPayload: JSON.parse(item.payload),
@@ -78,6 +82,7 @@ export function useAutoSync() {
 
             let settled = 0;
             let failed = 0;
+            let totalAmount = 0;
 
             if (result.results && Array.isArray(result.results)) {
                 for (let i = 0; i < items.length; i++) {
@@ -85,6 +90,17 @@ export function useAutoSync() {
                     if (serverResult?.status === "settled") {
                         await updateTransactionStatus(items[i].id!, "settled");
                         settled++;
+                        totalAmount += items[i].amount || 0;
+
+                        // Show individual payment settlement toast with staggered timing
+                        const intent = items[i].intent || "Payment";
+                        const amount = items[i].amount || 0;
+                        setTimeout(() => {
+                            toast.success(
+                                `✅ Settled: NPR ${amount.toLocaleString()} — ${intent}`,
+                                { duration: 4000 }
+                            );
+                        }, settled * 600); // stagger each toast by 600ms
                     } else {
                         const reason = serverResult?.reason || "unknown_error";
                         await updateTransactionStatus(items[i].id!, "failed", reason);
@@ -99,8 +115,17 @@ export function useAutoSync() {
             // Also update the upa_transactions key that the wallet context uses
             updateWalletContextTransactions(settled > 0);
 
+            // Dismiss the loading toast
+            toast.dismiss(syncToastId);
+
             if (settled > 0) {
-                toast.success(`${settled} payment${settled > 1 ? "s" : ""} settled!`);
+                // Show summary toast after individual ones
+                setTimeout(() => {
+                    toast.success(
+                        `🎉 All ${settled} payment${settled > 1 ? "s" : ""} settled! Total: NPR ${totalAmount.toLocaleString()}`,
+                        { duration: 6000 }
+                    );
+                }, (settled + 1) * 600);
             }
             if (failed > 0) {
                 toast.error(`${failed} payment${failed > 1 ? "s" : ""} failed to sync`);
@@ -138,12 +163,28 @@ function updateLocalQueuedToSettled() {
 }
 
 /**
+ * Get the active user ID from session for scoped storage
+ */
+function getActiveUserId(): string | null {
+    try {
+        const session = localStorage.getItem("upa_auth_session");
+        if (session) {
+            const s = JSON.parse(session);
+            return s.user?.id ?? null;
+        }
+    } catch { /* ignore */ }
+    return null;
+}
+
+/**
  * Update queued→settled in the upa_transactions key (wallet context)
  */
 function updateWalletContextTransactions(hasSettled: boolean) {
     if (!hasSettled) return;
     try {
-        const stored = localStorage.getItem("upa_transactions");
+        const uid = getActiveUserId();
+        const key = uid ? `upa_transactions:${uid}` : "upa_transactions";
+        const stored = localStorage.getItem(key);
         if (!stored) return;
         const txs = JSON.parse(stored);
         let changed = false;
@@ -156,7 +197,7 @@ function updateWalletContextTransactions(hasSettled: boolean) {
             }
         }
         if (changed) {
-            localStorage.setItem("upa_transactions", JSON.stringify(txs));
+            localStorage.setItem(key, JSON.stringify(txs));
             // Dispatch event so the home page knows to refresh
             window.dispatchEvent(new CustomEvent("upa-transactions-updated"));
         }

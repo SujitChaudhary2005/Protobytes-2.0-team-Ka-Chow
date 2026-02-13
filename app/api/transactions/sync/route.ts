@@ -118,11 +118,13 @@ export async function POST(request: NextRequest) {
             tx_id: txId,
             upa_id: upa?.id || qrPayload.upa_id,
             intent_id: intent?.id || qrPayload.intent_id,
+            tx_type: qrPayload.tx_type || (qrPayload.intent?.category === "transfer" ? "c2c" : "payment"),
             amount: qrPayload.amount,
             currency: "NPR",
             payer_name: qrPayload.metadata?.payerName,
             payer_id: qrPayload.metadata?.payerId,
             wallet_provider: "upa_pay",
+            payment_source: qrPayload.payment_source || "wallet",
             status: "settled",
             mode: "offline",
             metadata: {

@@ -1,18 +1,47 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { Wallet, Transaction, UserRole, AppUser, MerchantProfile, NIDCard, BankAccount, OfflineLimit, MOCK_NID_DATABASE } from "@/types";
 import { generateKeyPair, keyToHex } from "@/lib/crypto";
 import { SecureKeyStore } from "@/lib/secure-storage";
 
+// ── Per-user storage helper ──
+let _activeUserId: string | null = null;
+function uKey(base: string): string {
+    return _activeUserId ? `${base}:${_activeUserId}` : base;
+}
+function uKeyFor(base: string, userId: string): string {
+    return `${base}:${userId}`;
+}
+
+// ── Citizen-specific config ──
+const CITIZEN_INITIAL_BALANCE: Record<string, number> = {
+    "c1000000-0000-0000-0000-000000000001": 50000,  // Ram — city worker
+    "c1000000-0000-0000-0000-000000000005": 35000,  // Anita — university student
+};
+const CITIZEN_NID_MAP: Record<string, string> = {
+    "c1000000-0000-0000-0000-000000000001": "RAM-KTM-1990-4521",
+    "c1000000-0000-0000-0000-000000000005": "ANITA-BRT-1998-5643",
+};
+
+// UPA → user ID mapping (for crediting receivers in C2C)
+export const UPA_TO_USER: Record<string, string> = {
+    "ram@upa.np":   "c1000000-0000-0000-0000-000000000001",
+    "anita@upa.np": "c1000000-0000-0000-0000-000000000005",
+    "sita@upa.np":  "c1000000-0000-0000-0000-000000000002",
+    "hari@upa.np":  "c1000000-0000-0000-0000-000000000003",
+};
+
 // Demo users — matches supabase/02_seed.sql
 const DEMO_USERS: AppUser[] = [
-    { id: "c1000000-0000-0000-0000-000000000001", email: "citizen@demo.np",  name: "Ram Bahadur Thapa", role: "citizen",  phone: "+9779841000001" },
-    { id: "c1000000-0000-0000-0000-000000000005", email: "citizen2@demo.np", name: "Anita Gurung",      role: "citizen",  phone: "+9779841000005" },
+    { id: "c1000000-0000-0000-0000-000000000001", email: "citizen@demo.np",  name: "Ram Bahadur Thapa", role: "citizen",  phone: "+9779841000001", nidNumber: "RAM-KTM-1990-4521",  upa_id: "ram@upa.np" },
+    { id: "c1000000-0000-0000-0000-000000000005", email: "citizen2@demo.np", name: "Anita Gurung",      role: "citizen",  phone: "+9779841000005", nidNumber: "ANITA-BRT-1998-5643", upa_id: "anita@upa.np" },
     { id: "c1000000-0000-0000-0000-000000000002", email: "officer@demo.np",  name: "Sita Sharma",       role: "officer",  phone: "+9779841000002" },
     { id: "c1000000-0000-0000-0000-000000000003", email: "merchant@demo.np", name: "Hari Prasad Oli",   role: "merchant", phone: "+9779841000003" },
     { id: "c1000000-0000-0000-0000-000000000004", email: "admin@demo.np",    name: "Gita Adhikari",     role: "admin",    phone: "+9779841000004" },
 ];
+
+export { DEMO_USERS };
 
 const DEMO_PASSWORDS: Record<string, string> = {
     "citizen@demo.np": "citizen123",
@@ -51,6 +80,7 @@ interface WalletContextType {
     resetOfflineLimit: () => void;
     canSpendOffline: (amount: number) => boolean;
     deductFromBank: (amount: number) => void;
+    creditUser: (upaAddress: string, amount: number, tx: Transaction) => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -83,13 +113,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
             // Check auth session
             const session = localStorage.getItem("upa_auth_session");
+            let sessionUser: AppUser | null = null;
             if (session) {
                 try {
                     const s = JSON.parse(session);
                     if (s.expiresAt > Date.now()) {
                         setIsAuthenticated(true);
-                        // Restore user from session
                         if (s.user) {
+                            sessionUser = s.user;
+                            _activeUserId = s.user.id;
                             setUser(s.user);
                         }
                     } else {
@@ -100,51 +132,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 }
             }
 
-            // Load merchant profile
-            const storedMerchant = localStorage.getItem("upa_merchant_profile");
-            if (storedMerchant) {
-                try { setMerchantProfile(JSON.parse(storedMerchant)); } catch { /* ignore */ }
-            }
-
-            // Load NID
-            const storedNid = localStorage.getItem("upa_nid");
-            if (storedNid) {
-                try { setNid(JSON.parse(storedNid)); } catch { /* ignore */ }
-            }
-
-            // Load linked bank
-            const storedBank = localStorage.getItem("upa_linked_bank");
-            if (storedBank) {
-                try { setLinkedBank(JSON.parse(storedBank)); } catch { /* ignore */ }
-            }
-
-            // Load offline limit
-            const storedLimit = localStorage.getItem("upa_offline_limit");
-            if (storedLimit) {
-                try { setOfflineLimitState(JSON.parse(storedLimit)); } catch { /* ignore */ }
-            }
-
-            // Load wallet
-            const stored = localStorage.getItem("upa_wallet");
-            if (stored) {
-                try {
-                    const parsed = JSON.parse(stored);
-                    setWallet(parsed);
-                    setBalance(parsed.balance || 50000);
-                } catch {
-                    await createNewWallet();
-                }
-            } else {
-                await createNewWallet();
-            }
-
-            // Load transactions
-            const storedTx = localStorage.getItem("upa_transactions");
-            if (storedTx) {
-                try {
-                    setTransactions(JSON.parse(storedTx));
-                } catch { }
-            }
+            // Load user-scoped data
+            loadUserData(sessionUser);
 
             setIsLoading(false);
         };
@@ -152,21 +141,98 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         init();
     }, []);
 
-    const createNewWallet = async () => {
+    /** Load all user-specific data from localStorage */
+    const loadUserData = (targetUser: AppUser | null) => {
+        const uid = targetUser?.id ?? null;
+        _activeUserId = uid;
+
+        // Load merchant profile
+        const storedMerchant = localStorage.getItem(uKey("upa_merchant_profile"));
+        if (storedMerchant) {
+            try { setMerchantProfile(JSON.parse(storedMerchant)); } catch { /* ignore */ }
+        } else { setMerchantProfile(null); }
+
+        // Load NID
+        let loadedNid: NIDCard | null = null;
+        const storedNid = localStorage.getItem(uKey("upa_nid"));
+        if (storedNid) {
+            try { loadedNid = JSON.parse(storedNid); setNid(loadedNid); } catch { setNid(null); }
+        } else {
+            // Auto-link NID for citizen users
+            if (uid && targetUser?.role === "citizen") {
+                const nidNumber = CITIZEN_NID_MAP[uid];
+                if (nidNumber) {
+                    const found = MOCK_NID_DATABASE.find(n => n.nidNumber === nidNumber);
+                    if (found) {
+                        loadedNid = found;
+                        setNid(found);
+                        localStorage.setItem(uKey("upa_nid"), JSON.stringify(found));
+                        // Auto-link primary bank
+                        if (found.linkedBanks.length > 0) {
+                            const primary = found.linkedBanks.find(b => b.isPrimary) || found.linkedBanks[0];
+                            setLinkedBank(primary);
+                            localStorage.setItem(uKey("upa_linked_bank"), JSON.stringify(primary));
+                        }
+                    }
+                }
+            } else {
+                setNid(null);
+            }
+        }
+
+        // Load linked bank (if not already set by NID auto-link)
+        if (!loadedNid || localStorage.getItem(uKey("upa_linked_bank"))) {
+            const storedBank = localStorage.getItem(uKey("upa_linked_bank"));
+            if (storedBank) {
+                try { setLinkedBank(JSON.parse(storedBank)); } catch { setLinkedBank(null); }
+            } else { setLinkedBank(null); }
+        }
+
+        // Load offline limit
+        const storedLimit = localStorage.getItem(uKey("upa_offline_limit"));
+        if (storedLimit) {
+            try { setOfflineLimitState(JSON.parse(storedLimit)); } catch { /* ignore */ }
+        } else {
+            setOfflineLimitState({ maxAmount: 5000, currentUsed: 0, lastReset: Date.now() });
+        }
+
+        // Load wallet — per-user initial balance
+        const initialBalance = uid ? (CITIZEN_INITIAL_BALANCE[uid] ?? 50000) : 50000;
+        const stored = localStorage.getItem(uKey("upa_wallet"));
+        if (stored) {
+            try {
+                const parsed = JSON.parse(stored);
+                setWallet(parsed);
+                setBalance(parsed.balance ?? initialBalance);
+            } catch {
+                createNewWallet(initialBalance);
+            }
+        } else {
+            createNewWallet(initialBalance);
+        }
+
+        // Load transactions
+        const storedTx = localStorage.getItem(uKey("upa_transactions"));
+        if (storedTx) {
+            try { setTransactions(JSON.parse(storedTx)); } catch { setTransactions([]); }
+        } else { setTransactions([]); }
+    };
+
+    const createNewWallet = async (initialBalance: number = 50000) => {
         if (typeof window === "undefined") return;
 
         const { publicKey, privateKey } = generateKeyPair();
         const address = keyToHex(publicKey).slice(0, 20);
 
-        const walletId = localStorage.getItem("upa_wallet_id") || `wallet_${Date.now()}`;
-        if (!localStorage.getItem("upa_wallet_id")) {
-            localStorage.setItem("upa_wallet_id", walletId);
+        const walletId = localStorage.getItem(uKey("upa_wallet_id")) || `wallet_${Date.now()}`;
+        if (!localStorage.getItem(uKey("upa_wallet_id"))) {
+            localStorage.setItem(uKey("upa_wallet_id"), walletId);
         }
 
         const newWallet: Wallet = {
             id: walletId,
             name: "Demo Wallet",
-            balance: 50000,
+            balance: initialBalance,
             address: `upa_${address}`,
             publicKey: keyToHex(publicKey),
         };
@@ -175,7 +241,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         await SecureKeyStore.set("upa_private_key", keyToHex(privateKey));
 
         setWallet(newWallet);
-        localStorage.setItem("upa_wallet", JSON.stringify(newWallet));
+        setBalance(initialBalance);
+        localStorage.setItem(uKey("upa_wallet"), JSON.stringify(newWallet));
     };
 
     const initializeWallet = () => {
@@ -185,7 +252,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const addTransaction = (transaction: Transaction) => {
         setTransactions((prev) => {
             const updated = [transaction, ...prev];
-            localStorage.setItem("upa_transactions", JSON.stringify(updated));
+            localStorage.setItem(uKey("upa_transactions"), JSON.stringify(updated));
             return updated;
         });
     };
@@ -196,7 +263,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             if (wallet) {
                 const updated = { ...wallet, balance: newBalance };
                 setWallet(updated);
-                localStorage.setItem("upa_wallet", JSON.stringify(updated));
+                localStorage.setItem(uKey("upa_wallet"), JSON.stringify(updated));
             }
             return newBalance;
         });
@@ -219,6 +286,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             const matchedUser = DEMO_USERS.find(u => u.email === email.toLowerCase());
             if (!matchedUser) return false;
 
+            // Set active user for scoped storage
+            _activeUserId = matchedUser.id;
+
             // Create authenticated session with role
             const session = {
                 user: matchedUser,
@@ -229,18 +299,25 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             setIsAuthenticated(true);
             setUser(matchedUser);
 
+            // Load this user's data from scoped storage
+            loadUserData(matchedUser);
+
             // Update wallet name
-            if (wallet) {
-                const updated = { ...wallet, name: matchedUser.name };
-                setWallet(updated);
-                localStorage.setItem("upa_wallet", JSON.stringify(updated));
+            const currentWallet = localStorage.getItem(uKey("upa_wallet"));
+            if (currentWallet) {
+                try {
+                    const parsed = JSON.parse(currentWallet);
+                    const updated = { ...parsed, name: matchedUser.name };
+                    setWallet(updated);
+                    localStorage.setItem(uKey("upa_wallet"), JSON.stringify(updated));
+                } catch { /* ignore */ }
             }
 
             return true;
         } catch {
             return false;
         }
-    }, [wallet]);
+    }, []);
 
     /**
      * Register a citizen as a merchant — creates profile with generated UPA address
@@ -258,7 +335,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             ownerId: user?.id ?? "unknown",
         };
         setMerchantProfile(newProfile);
-        localStorage.setItem("upa_merchant_profile", JSON.stringify(newProfile));
+        localStorage.setItem(uKey("upa_merchant_profile"), JSON.stringify(newProfile));
         return newProfile;
     }, [user]);
 
@@ -269,12 +346,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const found = MOCK_NID_DATABASE.find(n => n.nidNumber === nidNumber);
         if (!found) return null;
         setNid(found);
-        localStorage.setItem("upa_nid", JSON.stringify(found));
+        localStorage.setItem(uKey("upa_nid"), JSON.stringify(found));
         // Auto-link primary bank
         if (found.linkedBanks.length > 0) {
             const primary = found.linkedBanks.find(b => b.isPrimary) || found.linkedBanks[0];
             setLinkedBank(primary);
-            localStorage.setItem("upa_linked_bank", JSON.stringify(primary));
+            localStorage.setItem(uKey("upa_linked_bank"), JSON.stringify(primary));
         }
         return found;
     }, []);
@@ -284,7 +361,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
      */
     const linkBank = useCallback((bank: BankAccount) => {
         setLinkedBank(bank);
-        localStorage.setItem("upa_linked_bank", JSON.stringify(bank));
+        localStorage.setItem(uKey("upa_linked_bank"), JSON.stringify(bank));
     }, []);
 
     /**
@@ -293,7 +370,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const setOfflineLimit = useCallback((limit: number) => {
         const newLimit: OfflineLimit = { maxAmount: limit, currentUsed: offlineLimit.currentUsed, lastReset: offlineLimit.lastReset };
         setOfflineLimitState(newLimit);
-        localStorage.setItem("upa_offline_limit", JSON.stringify(newLimit));
+        localStorage.setItem(uKey("upa_offline_limit"), JSON.stringify(newLimit));
     }, [offlineLimit]);
 
     /**
@@ -310,7 +387,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (!canSpendOffline(amount)) return false;
         const newLimit: OfflineLimit = { ...offlineLimit, currentUsed: offlineLimit.currentUsed + amount };
         setOfflineLimitState(newLimit);
-        localStorage.setItem("upa_offline_limit", JSON.stringify(newLimit));
+        localStorage.setItem(uKey("upa_offline_limit"), JSON.stringify(newLimit));
         return true;
     }, [offlineLimit, canSpendOffline]);
 
@@ -320,27 +397,71 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const resetOfflineLimit = useCallback(() => {
         const newLimit: OfflineLimit = { maxAmount: offlineLimit.maxAmount, currentUsed: 0, lastReset: Date.now() };
         setOfflineLimitState(newLimit);
-        localStorage.setItem("upa_offline_limit", JSON.stringify(newLimit));
+        localStorage.setItem(uKey("upa_offline_limit"), JSON.stringify(newLimit));
     }, [offlineLimit.maxAmount]);
 
     /**
      * Mock deduct from bank (NID-linked bank payment)
      */
     const deductFromBank = useCallback((amount: number) => {
-        // In production: call bank API. For demo: just log.
-        console.log(`[Bank Gateway] Deducted NPR ${amount} from ${linkedBank?.bankName ?? "unknown"} (${linkedBank?.accountNumber})`);
+        // In production: call bank API. For demo: no-op.
     }, [linkedBank]);
 
     const logout = useCallback(() => {
         localStorage.removeItem("upa_auth_session");
-        localStorage.removeItem("upa_merchant_profile");
-        localStorage.removeItem("upa_nid");
-        localStorage.removeItem("upa_linked_bank");
+        localStorage.removeItem(uKey("upa_merchant_profile"));
+        localStorage.removeItem(uKey("upa_nid"));
+        localStorage.removeItem(uKey("upa_linked_bank"));
+        _activeUserId = null;
         setIsAuthenticated(false);
         setUser(null);
         setMerchantProfile(null);
         setNid(null);
         setLinkedBank(null);
+    }, []);
+
+    /**
+     * Credit another user's wallet & transactions (used for C2C receiver)
+     * Works by directly updating the receiver's per-user localStorage
+     */
+    const creditUser = useCallback((upaAddress: string, amount: number, tx: Transaction) => {
+        const receiverId = UPA_TO_USER[upaAddress];
+        if (!receiverId) return; // Not a demo user
+
+        // Credit receiver's wallet
+        const walletKey = uKeyFor("upa_wallet", receiverId);
+        const storedWallet = localStorage.getItem(walletKey);
+        if (storedWallet) {
+            try {
+                const rWallet = JSON.parse(storedWallet);
+                rWallet.balance = (rWallet.balance ?? 0) + amount;
+                localStorage.setItem(walletKey, JSON.stringify(rWallet));
+            } catch { /* ignore */ }
+        } else {
+            // Receiver hasn't logged in yet — create their wallet with initial balance + credit
+            const initBal = CITIZEN_INITIAL_BALANCE[receiverId] ?? 50000;
+            localStorage.setItem(walletKey, JSON.stringify({
+                id: `wallet_${receiverId}`,
+                name: "Demo Wallet",
+                balance: initBal + amount,
+                address: `upa_${receiverId.slice(0, 20)}`,
+                publicKey: "",
+            }));
+        }
+
+        // Add incoming transaction to receiver's list
+        const txKey = uKeyFor("upa_transactions", receiverId);
+        const storedTx = localStorage.getItem(txKey);
+        let receiverTxs: Transaction[] = [];
+        if (storedTx) {
+            try { receiverTxs = JSON.parse(storedTx); } catch { /* ignore */ }
+        }
+        receiverTxs.unshift({
+            ...tx,
+            id: tx.id + "-received",
+            tx_id: (tx.tx_id || tx.id) + "-R",
+        });
+        localStorage.setItem(txKey, JSON.stringify(receiverTxs));
     }, []);
 
     return (
@@ -370,6 +491,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 resetOfflineLimit,
                 canSpendOffline,
                 deductFromBank,
+                creditUser,
             }}
         >
             {children}

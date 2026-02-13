@@ -29,6 +29,9 @@ import {
     Lock,
     ShieldCheck,
     Loader2,
+    ChevronDown,
+    ChevronUp,
+    Code2,
 } from "lucide-react";
 import {
     Select,
@@ -76,7 +79,7 @@ function OfficerPage() {
                     setQrImageUrl(res.url);
                 }
             })
-            .catch(() => {});
+            .catch(() => { });
     }, [selectedUpa, selectedIntentCode]);
 
     useEffect(() => {
@@ -84,10 +87,10 @@ function OfficerPage() {
             .then((r) => r.json())
             .then((res) => {
                 setUpas(res.data || []);
-                
+
                 // Check if officer has previously selected a UPA
                 const storedUpaAddress = localStorage.getItem("upa_officer_selected_office");
-                
+
                 if (storedUpaAddress) {
                     const storedUpa = res.data?.find((u: UPA) => u.address === storedUpaAddress);
                     if (storedUpa) {
@@ -98,7 +101,7 @@ function OfficerPage() {
                         return;
                     }
                 }
-                
+
                 // First time login - show selection dialog
                 if (res.data && res.data.length > 0) {
                     setShowUpaSelection(true);
@@ -157,7 +160,7 @@ function OfficerPage() {
             }
         }
     };
-    
+
     const handleInitialUpaSelection = (address: string) => {
         handleUpaSelect(address, true);
         setShowUpaSelection(false);
@@ -424,13 +427,11 @@ function OfficerPage() {
                                         role="switch"
                                         aria-checked={isOfflineMode}
                                         onClick={() => setIsOfflineMode(!isOfflineMode)}
-                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                                            isOfflineMode ? "bg-warning" : "bg-muted"
-                                        }`}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isOfflineMode ? "bg-warning" : "bg-muted"
+                                            }`}
                                     >
-                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                                            isOfflineMode ? "translate-x-6" : "translate-x-1"
-                                        }`} />
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isOfflineMode ? "translate-x-6" : "translate-x-1"
+                                            }`} />
                                     </button>
                                 </div>
                                 {isOfflineMode && (
@@ -492,6 +493,82 @@ function OfficerPage() {
                                             {copied ? "Copied!" : "Copy"}
                                         </Button>
                                     </div>
+
+                                    {/* QR Payload Reveal — Demo Element #6 */}
+                                    {(() => {
+                                        let parsed: any = null;
+                                        try { parsed = JSON.parse(qrData); } catch { }
+                                        if (!parsed) return null;
+                                        return (
+                                            <div className="border rounded-lg overflow-hidden">
+                                                <button
+                                                    onClick={() => {
+                                                        const el = document.getElementById('qr-payload-reveal');
+                                                        if (el) el.classList.toggle('hidden');
+                                                        const chevron = document.getElementById('qr-payload-chevron');
+                                                        if (chevron) chevron.classList.toggle('rotate-180');
+                                                    }}
+                                                    className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-muted/50 transition-colors"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <Code2 className="h-4 w-4 text-primary" />
+                                                        <span>View QR Payload</span>
+                                                        <span className="text-xs text-muted-foreground">
+                                                            ({Object.keys(parsed).length} fields • {qrData.length} bytes)
+                                                        </span>
+                                                    </div>
+                                                    <ChevronDown id="qr-payload-chevron" className="h-4 w-4 text-muted-foreground transition-transform duration-200" />
+                                                </button>
+                                                <div id="qr-payload-reveal" className="hidden border-t">
+                                                    <div className="p-3 bg-muted/30">
+                                                        <div className="flex flex-wrap gap-1.5 mb-3">
+                                                            {parsed.signed && (
+                                                                <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded-full">
+                                                                    <ShieldCheck className="h-3 w-3" /> Ed25519 Signed
+                                                                </span>
+                                                            )}
+                                                            <span className="text-[10px] font-medium bg-blue-500/10 text-blue-700 dark:text-blue-400 px-2 py-0.5 rounded-full">
+                                                                v{parsed.version || '1'}
+                                                            </span>
+                                                            <span className="text-[10px] font-medium bg-purple-500/10 text-purple-700 dark:text-purple-400 px-2 py-0.5 rounded-full">
+                                                                {parsed.intent?.id || 'unknown'}
+                                                            </span>
+                                                        </div>
+                                                        <pre className="text-[11px] font-mono leading-relaxed overflow-x-auto bg-background rounded-lg p-3 border max-h-72 overflow-y-auto">
+                                                            {JSON.stringify(parsed, null, 2)}
+                                                        </pre>
+                                                        <div className="flex gap-2 mt-2">
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="text-xs h-7"
+                                                                onClick={() => {
+                                                                    navigator.clipboard.writeText(JSON.stringify(parsed, null, 2));
+                                                                    toast.success('Payload JSON copied');
+                                                                }}
+                                                            >
+                                                                <Copy className="h-3 w-3 mr-1" /> Copy JSON
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="text-xs h-7"
+                                                                onClick={() => {
+                                                                    const blob = new Blob([JSON.stringify(parsed, null, 2)], { type: 'application/json' });
+                                                                    const url = URL.createObjectURL(blob);
+                                                                    const a = document.createElement('a');
+                                                                    a.href = url; a.download = 'qr-payload.json'; a.click();
+                                                                    URL.revokeObjectURL(url);
+                                                                }}
+                                                            >
+                                                                <Download className="h-3 w-3 mr-1" /> Export
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             ) : qrImageUrl ? (
                                 <div className="space-y-4">
@@ -552,7 +629,7 @@ function OfficerPage() {
                                                     <p className="font-medium text-sm">{tx.metadata?.payerName || tx.intent}</p>
                                                     {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
                                                         : tx.status === "queued" || tx.status === "pending" ? <Clock className="h-3.5 w-3.5 text-warning shrink-0" />
-                                                        : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
+                                                            : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
                                                 </div>
                                                 <p className="text-xs text-muted-foreground">{tx.intent} &middot; {formatDate(new Date(tx.timestamp))}</p>
                                                 <div className="flex items-center gap-2 mt-1">

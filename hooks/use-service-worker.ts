@@ -16,8 +16,6 @@ export function useServiceWorker() {
         navigator.serviceWorker
             .register("/sw.js")
             .then((registration) => {
-                console.log("[SW] Registered:", registration.scope);
-
                 // Request periodic background sync if available
                 if ("periodicSync" in registration) {
                     (registration as any).periodicSync

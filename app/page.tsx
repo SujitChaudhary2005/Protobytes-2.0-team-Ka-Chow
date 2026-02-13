@@ -23,6 +23,7 @@ import {
     Smartphone,
     Users,
     Zap,
+    Camera,
     ShoppingBag,
     Landmark,
     CreditCard,
@@ -39,6 +40,7 @@ import {
     FileText,
     IdCard,
     Building2,
+    Wallet,
 } from "lucide-react";
 
 export default function CitizenPage() {
@@ -51,7 +53,7 @@ export default function CitizenPage() {
 
 function CitizenHome() {
     const router = useRouter();
-    const { wallet, balance, nid, linkedBank, offlineLimit } = useWallet();
+    const { wallet, balance, nid, linkedBank, offlineLimit, transactions: walletTransactions, user } = useWallet();
     useAutoSync();
     const [upaAddress, setUpaAddress] = useState("");
     const [mounted, setMounted] = useState(false);
@@ -60,7 +62,17 @@ function CitizenHome() {
 
     useEffect(() => { setMounted(true); }, []);
 
+    // Determine the current user's UPA for detecting incoming vs outgoing
+    const myUPA = nid?.linkedUPA || user?.upa_id || "";
+
     const loadTransactions = useCallback(async () => {
+        // Prefer wallet context transactions (per-user scoped localStorage)
+        if (walletTransactions && walletTransactions.length > 0) {
+            setTransactions(walletTransactions);
+            return;
+        }
+
+        // Fallback: try API then localStorage
         try {
             const res = await fetch("/api/transactions");
             if (res.ok) {
@@ -90,11 +102,7 @@ function CitizenHome() {
                 }
             }
         } catch { /* fall back */ }
-        try {
-            const stored = localStorage.getItem("upa_transactions");
-            if (stored) setTransactions(JSON.parse(stored));
-        } catch { /* ignore */ }
-    }, []);
+    }, [walletTransactions]);
 
     useEffect(() => {
         const load = async () => { setLoading(true); await loadTransactions(); setLoading(false); };
@@ -103,7 +111,14 @@ function CitizenHome() {
         return () => clearInterval(interval);
     }, [loadTransactions]);
 
-    const totalSpent = transactions.filter((t) => t.status === "settled").reduce((sum, t) => sum + t.amount, 0);
+    const totalSpent = transactions
+        .filter((t) => t.status === "settled")
+        .filter((t) => {
+            // Exclude incoming C2C from "spent" total
+            if (t.tx_type === "c2c" && t.fromUPA !== myUPA && t.metadata?.fromUPA !== myUPA && (t.fromUPA || t.metadata?.fromUPA)) return false;
+            return true;
+        })
+        .reduce((sum, t) => sum + t.amount, 0);
     const recentTx = transactions.slice(0, 8);
     const offlinePct = offlineLimit.maxAmount > 0 ? Math.round((offlineLimit.currentUsed / offlineLimit.maxAmount) * 100) : 0;
 
@@ -135,7 +150,7 @@ function CitizenHome() {
     }
 
     return (
-        <div className="p-4 md:p-6 space-y-5 max-w-lg mx-auto">
+        <div className="p-4 md:p-6 space-y-5">
             {/* Balance Card */}
             <Card className="bg-gradient-to-br from-blue-600 to-blue-700 text-white border-0">
                 <CardContent className="p-5">
@@ -197,11 +212,11 @@ function CitizenHome() {
                 </Button>
                 <Button
                     variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-purple-50 hover:border-purple-300"
+                    className="h-20 flex-col gap-1.5 hover:bg-blue-50 hover:border-blue-300"
                     onClick={() => router.push("/pay/nid")}
                 >
-                    <Smartphone className="h-5 w-5 text-purple-600" />
-                    <span className="text-xs font-medium">NFC Tap</span>
+                    <Camera className="h-5 w-5 text-blue-600" />
+                    <span className="text-xs font-medium">Scan NID</span>
                 </Button>
                 <Button
                     variant="outline"
@@ -221,11 +236,11 @@ function CitizenHome() {
                 </Button>
                 <Button
                     variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-rose-50 hover:border-rose-300"
-                    onClick={() => router.push("/pay/scan")}
+                    className="h-20 flex-col gap-1.5 hover:bg-purple-50 hover:border-purple-300"
+                    onClick={() => router.push("/pay/nfc")}
                 >
-                    <ShoppingBag className="h-5 w-5 text-rose-600" />
-                    <span className="text-xs font-medium">Shop</span>
+                    <Smartphone className="h-5 w-5 text-purple-600" />
+                    <span className="text-xs font-medium">NFC Pay</span>
                 </Button>
                 <Button
                     variant="outline"
@@ -334,7 +349,9 @@ function CitizenHome() {
                                             </div>
                                             <p className="text-[10px] text-muted-foreground truncate">
                                                 {tx.tx_type === "c2c"
-                                                    ? `→ ${tx.metadata?.toUPA || tx.recipient}`
+                                                    ? (tx.fromUPA === myUPA || tx.metadata?.fromUPA === myUPA
+                                                        ? `→ Sent to ${tx.metadata?.toUPA || tx.recipient}`
+                                                        : `← Received from ${tx.fromUPA || tx.metadata?.fromUPA || tx.recipient}`)
                                                     : tx.recipientName || tx.recipient}
                                             </p>
                                             <div className="flex items-center gap-1.5 mt-0.5">
@@ -342,6 +359,10 @@ function CitizenHome() {
                                                 {tx.mode === "offline" ? (
                                                     <span className="inline-flex items-center gap-0.5 text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">
                                                         <WifiOff className="h-2 w-2" /> Offline
+                                                    </span>
+                                                ) : tx.mode === "camera" ? (
+                                                    <span className="inline-flex items-center gap-0.5 text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">
+                                                        <Camera className="h-2 w-2" /> Camera
                                                     </span>
                                                 ) : tx.mode === "nfc" ? (
                                                     <span className="inline-flex items-center gap-0.5 text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">
@@ -359,10 +380,19 @@ function CitizenHome() {
                                         </div>
                                     </div>
                                     <div className="text-right ml-2">
-                                        <p className="font-semibold text-xs">-{formatCurrency(tx.amount)}</p>
-                                        <p className={`text-[10px] capitalize ${tx.status === "settled" ? "text-emerald-500" : tx.status === "queued" || tx.status === "pending" ? "text-amber-500" : "text-red-500"}`}>
-                                            {tx.status}
-                                        </p>
+                                        {(() => {
+                                            const isIncoming = tx.tx_type === "c2c" && tx.fromUPA !== myUPA && tx.metadata?.fromUPA !== myUPA && (tx.fromUPA || tx.metadata?.fromUPA);
+                                            return (
+                                                <>
+                                                    <p className={`font-semibold text-xs ${isIncoming ? "text-green-600" : ""}`}>
+                                                        {isIncoming ? "+" : "-"}{formatCurrency(tx.amount)}
+                                                    </p>
+                                                    <p className={`text-[10px] capitalize ${tx.status === "settled" ? "text-emerald-500" : tx.status === "queued" || tx.status === "pending" ? "text-amber-500" : "text-red-500"}`}>
+                                                        {tx.status}
+                                                    </p>
+                                                </>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
                             ))}

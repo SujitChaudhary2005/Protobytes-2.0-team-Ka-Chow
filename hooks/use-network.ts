@@ -35,6 +35,6 @@ export function useNetwork() {
         };
     }, []);
 
-    return { online: mounted ? online : true, lastChecked };
+    return { online: mounted ? online : true, lastChecked, mounted };
 }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { initiateTransfer, type TransferRequest } from "@/lib/transfer";
 
 // POST /api/transactions/c2c — Citizen-to-Citizen payment
 export async function POST(request: NextRequest) {
@@ -28,15 +29,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Simulate processing delay
-    await new Promise((r) => setTimeout(r, 500));
-
     const txId = `UPA-2026-${String(Date.now()).slice(-5)}`;
     const now = new Date().toISOString();
+    const nonce = body.nonce || `c2c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-    // Try Supabase first
-    if (supabase) {
+    // ── Fund Transfer via abstraction layer ─────────────────────
+    const transferReq: TransferRequest = {
+      txId,
+      source: {
+        walletId: fromUPA,
+        provider: "upa_wallet",
+      },
+      destination: {
+        upaAddress: toUPA,
+      },
+      amount,
+      currency: "NPR",
+      purpose: intent,
+      payerName: body.payerName || fromUPA,
+      payerId: fromUPA,
+    };
+
+    const transferResult = await initiateTransfer(transferReq);
+
+    if (transferResult.status === "failed") {
+      return NextResponse.json(
+        { success: false, error: transferResult.errorMessage || "Fund transfer failed" },
+        { status: 500 }
+      );
+    }
+
+    // Try Supabase
+    if (isSupabaseConfigured()) {
       try {
+        // Check nonce uniqueness
+        const { data: existingNonce } = await supabase
+          .from("transactions")
+          .select("id")
+          .eq("nonce", nonce)
+          .single();
+
+        if (existingNonce) {
+          return NextResponse.json(
+            { success: false, error: "Replay detected: nonce already used" },
+            { status: 400 }
+          );
+        }
+
         // Resolve UPA IDs
         const { data: fromUpaData } = await supabase
           .from("upas")
@@ -70,8 +109,12 @@ export async function POST(request: NextRequest) {
               message: message || "",
               fromUPA,
               toUPA,
+              transferId: transferResult.transferId,
+              bankReference: transferResult.bankReference,
+              fee: transferResult.fee,
+              netAmount: transferResult.netAmount,
             },
-            nonce: `c2c-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            nonce,
             issued_at: now,
             settled_at: now,
           });
@@ -89,6 +132,8 @@ export async function POST(request: NextRequest) {
                 message,
                 status: "settled",
                 settledAt: now,
+                transferId: transferResult.transferId,
+                fee: transferResult.fee,
               },
             });
           }
@@ -98,7 +143,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fallback: return mock success
+    // Fallback: return success (localStorage handled on client)
     return NextResponse.json({
       success: true,
       transaction: {
@@ -111,6 +156,8 @@ export async function POST(request: NextRequest) {
         message,
         status: "settled",
         settledAt: now,
+        transferId: transferResult.transferId,
+        fee: transferResult.fee,
       },
     });
   } catch (error) {
