@@ -34,6 +34,9 @@ import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { queueTransaction } from "@/lib/db";
 import { createSignalChannel } from "@/lib/nfc-signal";
 import { MerchantOfflineCharge } from "@/components/cross-device-offline";
+import { QRCodeDisplay } from "@/components/qr-code";
+import { QrCode } from "lucide-react";
+import { useMemo } from "react";
 
 type TerminalStatus = "ready" | "detecting" | "processing" | "success";
 type BizTxMode = "charge" | "b2c" | "b2g" | "xdevice";
@@ -689,6 +692,40 @@ function MerchantNFCTerminal() {
                 </CardContent>
             </Card>
 
+            {/* QR Code Display for Charge Mode */}
+            {txMode === "charge" && paymentAmount && Number(paymentAmount) > 0 && (
+                <Card className="border-primary/20">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                            <QrCode className="h-4 w-4 text-primary" />
+                            Payment QR Code
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        <p className="text-xs text-muted-foreground text-center">
+                            Customer can scan this QR code to pay {formatCurrency(Number(paymentAmount))}
+                        </p>
+                        <div className="flex justify-center bg-white rounded-lg p-4 border">
+                            <QRCodeDisplay
+                                value={JSON.stringify({
+                                    version: "1.0",
+                                    type: "merchant_charge",
+                                    merchantName: businessName,
+                                    merchantUPA: businessUPA,
+                                    amount: Number(paymentAmount),
+                                    currency: "NPR",
+                                    timestamp: Date.now(),
+                                })}
+                                size={200}
+                            />
+                        </div>
+                        <p className="text-xs text-muted-foreground text-center">
+                            Works offline — customer scans with /pay?mode=qr
+                        </p>
+                    </CardContent>
+                </Card>
+            )}
+
             {/* Daily Stats */}
             <Card>
                 <CardContent className="p-4">
@@ -723,7 +760,7 @@ function MerchantNFCTerminal() {
                                     </div>
                                     <h3 className="text-lg font-semibold mb-2">Waiting for Customers</h3>
                                     <p className="text-sm text-muted-foreground">
-                                        Customers on <code>/pay/nfc</code> (any device) will appear here
+                                        Customers on <code>/pay?mode=nfc</code> (any device) will appear here
                                     </p>
                                 </>
                             )}
@@ -771,7 +808,7 @@ function MerchantNFCTerminal() {
                                     </div>
                                     <h3 className="text-lg font-semibold mb-2">B2C — Send to Customer</h3>
                                     <p className="text-sm text-muted-foreground">
-                                        Customers on <code>/pay/nfc</code> (any device) will appear here for refunds/payouts
+                                        Customers on <code>/pay?mode=nfc</code> (any device) will appear here for refunds/payouts
                                     </p>
                                 </>
                             )}
@@ -929,7 +966,7 @@ function MerchantNFCTerminal() {
                         <Shield className="h-4 w-4 text-primary" /> Merchant Terminal Guide
                     </h4>
                     <div className="text-xs text-muted-foreground space-y-1.5">
-                        <p><strong>Charge (C2B):</strong> Customer opens /pay/nfc on their phone → appears here → tap Charge</p>
+                        <p><strong>Charge (C2B):</strong> Customer opens /pay?mode=nfc on their phone → appears here → tap Charge</p>
                         <p><strong>B2C (Refund/Payout):</strong> Switch to B2C → select customer → Send</p>
                         <p><strong>B2G (Tax/Fee):</strong> Switch to B2G → select govt entity → Pay</p>
                         <p><strong>X-Device (Offline):</strong> Two-phone Ed25519 QR handshake — zero internet needed!</p>

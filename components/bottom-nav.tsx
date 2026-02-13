@@ -41,17 +41,10 @@ const bottomNavItems: BottomNavItem[] = [
         roles: ["citizen"],
     },
     {
-        label: "Scan & Pay",
-        shortLabel: "Scan",
-        url: "/pay/scan",
+        label: "Pay",
+        shortLabel: "Pay",
+        url: "/pay",
         icon: ScanLine,
-        roles: ["citizen"],
-    },
-    {
-        label: "NFC Pay",
-        shortLabel: "NFC",
-        url: "/pay/nfc",
-        icon: Smartphone,
         roles: ["citizen"],
     },
     {
@@ -92,6 +85,7 @@ export function BottomNav() {
 
     const isActive = (url: string) => {
         if (url === "/") return pathname === "/";
+        if (url === "/pay") return pathname.startsWith("/pay") && pathname !== "/pay/settings" && pathname !== "/pay/success" && pathname !== "/pay/confirm" && pathname !== "/pay/c2c" && pathname !== "/pay/bills" && pathname !== "/pay/nid" && pathname !== "/pay/queued";
         return pathname.startsWith(url);
     };
 
