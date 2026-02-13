@@ -390,10 +390,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     const saralPayBalance = offlineWallet.balance;
 
-    /**
-     * Load SaralPay wallet — deducts from main balance, loads into SaralPay.
-     * Returns true if successful, false if insufficient main balance.
-     */
+
     const loadSaralPay = useCallback((amount: number): boolean => {
         if (amount <= 0) return false;
         // Check main balance (get fresh value from state)
