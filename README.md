@@ -40,7 +40,6 @@ UPA-NP is a unified payment intelligence layer that transforms raw money transfe
 | **Offline Storage** | Dexie.js (IndexedDB) |
 | **QR Code** | qrcode (generation) |
 | **State Management** | React Context API |
-| **Validation** | Zod |
 | **Deployment** | Vercel |
 | **Package Manager** | npm |
 
@@ -144,7 +143,8 @@ upa-np/
 │   └── wallet-context.tsx      # Wallet state management
 ├── hooks/                      # Custom React hooks
 │   ├── use-network.ts          # Network status hook
-│   └── use-toast.ts            # Toast notification hook
+│   ├── use-auto-sync.ts        # Auto-sync queued transactions
+│   └── use-service-worker.ts   # Service worker registration
 ├── types/                      # TypeScript type definitions
 
 ├── next.config.mjs
