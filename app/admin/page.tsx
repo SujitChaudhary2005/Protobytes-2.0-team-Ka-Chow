@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getTransactions, Transaction } from "@/lib/storage";
+import { isSupabaseConfigured, subscribeToTransactions } from "@/lib/supabase";
 import { toast } from "sonner";
 import { RouteGuard } from "@/components/route-guard";
 import { useAutoSync } from "@/hooks/use-auto-sync";
@@ -111,7 +112,7 @@ function AdminDashboard() {
         load();
     }, [loadTransactions]);
 
-    // Auto-refresh: listen for settlement events + poll every 10s
+    // Auto-refresh: Supabase Realtime (primary) + event + storage listeners (fallback)
     useEffect(() => {
         // React to `upa-transactions-updated` dispatched by auto-sync hook
         const onTxUpdate = () => {
@@ -127,13 +128,25 @@ function AdminDashboard() {
         };
         window.addEventListener("storage", onStorage);
 
-        // Fallback polling every 10s for Supabase-backed data
-        const interval = setInterval(loadTransactions, 10_000);
+        // ── Supabase Realtime ────────────────────────────────────
+        // When active, reload on every INSERT/UPDATE — no polling needed.
+        const channel = subscribeToTransactions(
+            () => loadTransactions(),   // onInsert
+            () => loadTransactions(),   // onUpdate
+        );
+
+        // Fallback polling: 30s if Supabase Realtime is active, 10s if not
+        const pollInterval = channel ? 30_000 : 10_000;
+        const interval = setInterval(loadTransactions, pollInterval);
 
         return () => {
             window.removeEventListener("upa-transactions-updated", onTxUpdate);
             window.removeEventListener("storage", onStorage);
             clearInterval(interval);
+            // Clean up Supabase channel
+            if (channel) {
+                channel.unsubscribe();
+            }
         };
     }, [loadTransactions]);
 

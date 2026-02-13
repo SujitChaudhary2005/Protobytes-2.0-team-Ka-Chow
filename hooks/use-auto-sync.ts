@@ -115,6 +115,12 @@ export function useAutoSync() {
             // Also update the upa_transactions key that the wallet context uses
             updateWalletContextTransactions(settled > 0);
 
+            // Dispatch global event so admin dashboard / other pages refresh
+            // (Supabase Realtime will also fire, but this covers localStorage-only mode)
+            if (settled > 0) {
+                window.dispatchEvent(new CustomEvent("upa-transactions-updated"));
+            }
+
             // Dismiss the loading toast
             toast.dismiss(syncToastId);
 
