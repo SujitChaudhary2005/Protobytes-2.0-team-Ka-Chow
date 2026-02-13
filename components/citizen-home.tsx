@@ -312,14 +312,6 @@ export function CitizenHome() {
                 </Button>
                 <Button
                     variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-700"
-                    onClick={() => router.push("/pay/nid")}
-                >
-                    <Camera className="h-5 w-5 text-teal-600" />
-                    <span className="text-xs font-medium text-gray-700">Scan NID</span>
-                </Button>
-                <Button
-                    variant="outline"
                     className="h-20 flex-col gap-1.5 hover:bg-green-50 hover:border-green-300 hover:text-green-700"
                     onClick={() => router.push("/pay/c2c")}
                 >
