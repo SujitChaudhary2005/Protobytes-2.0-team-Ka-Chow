@@ -26,7 +26,7 @@ ALTER TABLE transactions ALTER COLUMN intent_id DROP NOT NULL;
 -- Extend mode check
 ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_mode_check;
 ALTER TABLE transactions ADD CONSTRAINT transactions_mode_check
-  CHECK (mode IN ('online', 'offline', 'nfc'));
+  CHECK (mode IN ('online', 'offline', 'nfc', 'camera'));
 
 -- ── National ID Cards (Mock Database) ──
 CREATE TABLE IF NOT EXISTS nid_cards (
@@ -55,16 +55,6 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── Offline Spending Limits ──
-CREATE TABLE IF NOT EXISTS offline_limits (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  upa_id          UUID REFERENCES upas(id) UNIQUE NOT NULL,
-  limit_amount    DECIMAL(12,2) NOT NULL DEFAULT 5000.00,
-  current_used    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  last_reset      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ DEFAULT NOW()
-);
-
 -- ── Indexes ──
 CREATE INDEX IF NOT EXISTS idx_nid_number ON nid_cards(nid_number);
 CREATE INDEX IF NOT EXISTS idx_bank_nid ON bank_accounts(nid_id);
@@ -72,16 +62,13 @@ CREATE INDEX IF NOT EXISTS idx_tx_type ON transactions(tx_type);
 CREATE INDEX IF NOT EXISTS idx_tx_payer ON transactions(payer_upa);
 CREATE INDEX IF NOT EXISTS idx_tx_receiver ON transactions(receiver_upa);
 CREATE INDEX IF NOT EXISTS idx_tx_payment_source ON transactions(payment_source);
-CREATE INDEX IF NOT EXISTS idx_offline_limit_upa ON offline_limits(upa_id);
 
 -- ── RLS (Hackathon: allow all) ──
 ALTER TABLE nid_cards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bank_accounts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE offline_limits ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow all access to nid_cards" ON nid_cards FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to bank_accounts" ON bank_accounts FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all access to offline_limits" ON offline_limits FOR ALL USING (true) WITH CHECK (true);
 
 -- ── Realtime ──
 ALTER PUBLICATION supabase_realtime ADD TABLE nid_cards;

@@ -8,7 +8,9 @@
 INSERT INTO upas (id, address, entity_name, entity_type, nid_number) VALUES
   ('a2000000-0000-0000-0000-000000000001', 'ram@upa.np',    'Ram Bahadur Thapa',   'citizen', 'RAM-KTM-1990-4521'),
   ('a2000000-0000-0000-0000-000000000002', 'sita@upa.np',   'Sita Sharma',         'citizen', 'SITA-PKR-1995-7832'),
-  ('a2000000-0000-0000-0000-000000000003', 'hari@upa.np',   'Hari Prasad Gurung',  'citizen', 'HARI-LTP-1988-3214')
+  ('a2000000-0000-0000-0000-000000000003', 'hari@upa.np',   'Hari Prasad Gurung',  'citizen', 'HARI-LTP-1988-3214'),
+  ('a2000000-0000-0000-0000-000000000004', 'anita@upa.np',  'Anita Gurung',        'citizen', 'ANITA-BRT-1998-5643'),
+  ('a2000000-0000-0000-0000-000000000005', 'tyler@upa.np',  'Tyler Durden',        'citizen', '123-456-789')
 ON CONFLICT (id) DO NOTHING;
 
 -- ── Merchant UPAs ──
@@ -81,23 +83,20 @@ ON CONFLICT (id) DO NOTHING;
 
 -- ── NID Cards ──
 INSERT INTO nid_cards (id, nid_number, full_name, date_of_birth, issue_date, expiry_date, photo_url, district, is_active, upa_id) VALUES
-  ('d1000000-0000-0000-0000-000000000001', 'RAM-KTM-1990-4521',  'Ram Bahadur Thapa',   '1990-05-15', '2020-01-01', '2030-01-01', '/mock-nid/ram.jpg',  'Kathmandu', TRUE, 'a2000000-0000-0000-0000-000000000001'),
-  ('d1000000-0000-0000-0000-000000000002', 'SITA-PKR-1995-7832', 'Sita Sharma',         '1995-08-22', '2021-03-15', '2031-03-15', '/mock-nid/sita.jpg', 'Pokhara',   TRUE, 'a2000000-0000-0000-0000-000000000002'),
-  ('d1000000-0000-0000-0000-000000000003', 'HARI-LTP-1988-3214', 'Hari Prasad Gurung',  '1988-12-10', '2019-06-20', '2029-06-20', '/mock-nid/hari.jpg', 'Lalitpur',  TRUE, 'a2000000-0000-0000-0000-000000000003')
+  ('d1000000-0000-0000-0000-000000000001', 'RAM-KTM-1990-4521',  'Ram Bahadur Thapa',   '1990-05-15', '2020-01-01', '2030-01-01', '/mock-nid/ram.jpg',   'Kathmandu', TRUE, 'a2000000-0000-0000-0000-000000000001'),
+  ('d1000000-0000-0000-0000-000000000002', 'SITA-PKR-1995-7832', 'Sita Sharma',         '1995-08-22', '2021-03-15', '2031-03-15', '/mock-nid/sita.jpg',  'Pokhara',   TRUE, 'a2000000-0000-0000-0000-000000000002'),
+  ('d1000000-0000-0000-0000-000000000003', 'HARI-LTP-1988-3214', 'Hari Prasad Gurung',  '1988-12-10', '2019-06-20', '2029-06-20', '/mock-nid/hari.jpg',  'Lalitpur',  TRUE, 'a2000000-0000-0000-0000-000000000003'),
+  ('d1000000-0000-0000-0000-000000000004', 'ANITA-BRT-1998-5643','Anita Gurung',        '1998-03-12', '2022-06-15', '2032-06-15', '/mock-nid/anita.jpg', 'Bharatpur', TRUE, 'a2000000-0000-0000-0000-000000000004'),
+  ('d1000000-0000-0000-0000-000000000005', '123-456-789',        'Tyler Durden',        '1979-12-18', '2024-12-18', '2034-12-18', '/mock-nid/tyler.png', 'Kathmandu', TRUE, 'a2000000-0000-0000-0000-000000000005')
 ON CONFLICT (id) DO NOTHING;
 
 -- ── Bank Accounts ──
 INSERT INTO bank_accounts (id, nid_id, bank_name, account_number, account_type, is_primary, linked_via) VALUES
   ('e1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', 'Nepal Bank',      '01234567890123', 'savings', TRUE, 'nid'),
   ('e1000000-0000-0000-0000-000000000002', 'd1000000-0000-0000-0000-000000000002', 'Nabil Bank',      '98765432109876', 'savings', TRUE, 'nid'),
-  ('e1000000-0000-0000-0000-000000000003', 'd1000000-0000-0000-0000-000000000003', 'NIC Asia Bank',   '11223344556677', 'savings', TRUE, 'nid')
-ON CONFLICT (id) DO NOTHING;
-
--- ── Offline Limits ──
-INSERT INTO offline_limits (id, upa_id, limit_amount, current_used) VALUES
-  ('f1000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000001', 5000,  0),
-  ('f1000000-0000-0000-0000-000000000002', 'a2000000-0000-0000-0000-000000000002', 10000, 0),
-  ('f1000000-0000-0000-0000-000000000003', 'a2000000-0000-0000-0000-000000000003', 2000,  0)
+  ('e1000000-0000-0000-0000-000000000003', 'd1000000-0000-0000-0000-000000000003', 'NIC Asia Bank',   '11223344556677', 'savings', TRUE, 'nid'),
+  ('e1000000-0000-0000-0000-000000000004', 'd1000000-0000-0000-0000-000000000004', 'Himalayan Bank',  '55667788990011', 'savings', TRUE, 'nid'),
+  ('e1000000-0000-0000-0000-000000000005', 'd1000000-0000-0000-0000-000000000005', 'Himalayan Bank',  '23410098776655', 'savings', TRUE, 'nid')
 ON CONFLICT (id) DO NOTHING;
 
 -- ── Mixed Transactions (merchant, bill, C2C, NID) ──

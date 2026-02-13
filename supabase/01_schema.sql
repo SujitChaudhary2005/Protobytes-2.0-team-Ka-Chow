@@ -12,7 +12,6 @@
 -- ============================================
 -- STEP 0: Clean slate (safe to re-run)
 -- ============================================
-DROP TABLE IF EXISTS sync_queue CASCADE;
 DROP TABLE IF EXISTS transactions CASCADE;
 DROP TABLE IF EXISTS intents CASCADE;
 DROP TABLE IF EXISTS upas CASCADE;
@@ -79,21 +78,6 @@ CREATE TABLE transactions (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2.4 Offline Sync Queue
-CREATE TABLE sync_queue (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  transaction_id  UUID REFERENCES transactions(id) ON DELETE CASCADE,
-  signed_payload  JSONB NOT NULL,
-  signature       TEXT NOT NULL,
-  nonce           VARCHAR(100) UNIQUE NOT NULL,
-  status          VARCHAR(20) DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'synced', 'failed', 'rejected')),
-  error_message   TEXT,
-  attempts        INTEGER DEFAULT 0,
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  synced_at       TIMESTAMPTZ
-);
-
 -- ============================================
 -- STEP 3: Indexes
 -- ============================================
@@ -104,34 +88,13 @@ CREATE INDEX idx_tx_created   ON transactions(created_at DESC);
 CREATE INDEX idx_tx_nonce     ON transactions(nonce);
 CREATE INDEX idx_tx_mode      ON transactions(mode);
 CREATE INDEX idx_tx_issued    ON transactions(issued_at DESC);
-CREATE INDEX idx_sync_status  ON sync_queue(status);
-CREATE INDEX idx_sync_txn     ON sync_queue(transaction_id);
 CREATE INDEX idx_intents_upa  ON intents(upa_id);
 CREATE INDEX idx_upas_address ON upas(address);
 
 -- ============================================
--- STEP 4: Users & Roles
--- ============================================
-CREATE TABLE users (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email       VARCHAR(255) UNIQUE NOT NULL,
-    password    VARCHAR(255) NOT NULL,        -- plain text for hackathon demo only
-    name        VARCHAR(255) NOT NULL,
-    role        VARCHAR(20)  NOT NULL CHECK (role IN ('citizen','officer','merchant','admin')),
-    phone       VARCHAR(20),
-    citizenship_id VARCHAR(20),
-    upa_id      UUID REFERENCES upas(id),
-    created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_role  ON users(role);
-
--- ============================================
--- STEP 5: Enable Realtime
+-- STEP 4: Enable Realtime
 -- ============================================
 ALTER PUBLICATION supabase_realtime ADD TABLE transactions;
-ALTER PUBLICATION supabase_realtime ADD TABLE sync_queue;
 
 -- ============================================
 -- STEP 5: Row Level Security (Hackathon: allow all)
@@ -139,12 +102,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE sync_queue;
 ALTER TABLE upas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE intents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sync_queue ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow all access to upas"         ON upas         FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to intents"      ON intents      FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to transactions" ON transactions FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all access to sync_queue"   ON sync_queue   FOR ALL USING (true) WITH CHECK (true);
-
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all access to users"        ON users        FOR ALL USING (true) WITH CHECK (true);
