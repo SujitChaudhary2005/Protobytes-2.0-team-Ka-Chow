@@ -11,6 +11,10 @@ import {
     Building2,
     UserCheck,
     LogOut,
+    Settings,
+    Smartphone,
+    Presentation,
+    ArrowLeftRight,
 } from "lucide-react";
 
 import {
@@ -52,6 +56,12 @@ const navItems: NavItem[] = [
         roles: ["citizen"],
     },
     {
+        title: "NFC Tap & Pay",
+        url: "/pay/nfc",
+        icon: Smartphone,
+        roles: ["citizen"],
+    },
+    {
         title: "Gov Office Portal",
         url: "/officer",
         icon: QrCode,
@@ -68,6 +78,24 @@ const navItems: NavItem[] = [
         url: "/admin",
         icon: Building2,
         roles: ["admin"],
+    },
+    {
+        title: "Settings",
+        url: "/settings",
+        icon: Settings,
+        roles: ["citizen", "officer", "merchant", "admin"],
+    },
+    {
+        title: "Demo Overview",
+        url: "/demo",
+        icon: Presentation,
+        roles: ["citizen", "officer", "merchant", "admin"],
+    },
+    {
+        title: "Intent Compare",
+        url: "/demo/intent",
+        icon: ArrowLeftRight,
+        roles: ["citizen", "officer", "merchant", "admin"],
     },
 ];
 
@@ -96,7 +124,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                     <Shield className="size-4" />
                                 </div>
                                 <div className="flex flex-col gap-0.5 leading-none">
-                                    <span className="font-semibold">UPA Pay</span>
+                                    <span className="font-semibold">SaralPay</span>
                                     <span className="text-xs text-muted-foreground">
                                         Nepal Gov Payments
                                     </span>
@@ -183,7 +211,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <SidebarMenuItem>
                         <div className="flex items-center gap-2 px-2 py-1.5">
                             <NetworkStatus />
-                            <OfflineToggle />
                         </div>
                     </SidebarMenuItem>
                 </SidebarMenu>

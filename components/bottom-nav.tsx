@@ -15,7 +15,9 @@ import {
     Wifi,
     WifiOff,
     Shield,
+    Settings,
     X,
+    Smartphone,
 } from "lucide-react";
 import { useWallet } from "@/contexts/wallet-context";
 import { useNetwork } from "@/hooks/use-network";
@@ -46,6 +48,13 @@ const bottomNavItems: BottomNavItem[] = [
         roles: ["citizen"],
     },
     {
+        label: "NFC Pay",
+        shortLabel: "NFC",
+        url: "/pay/nfc",
+        icon: Smartphone,
+        roles: ["citizen"],
+    },
+    {
         label: "My Business",
         shortLabel: "Business",
         url: "/merchant",
@@ -65,6 +74,13 @@ const bottomNavItems: BottomNavItem[] = [
         url: "/admin",
         icon: Building2,
         roles: ["admin"],
+    },
+    {
+        label: "Settings",
+        shortLabel: "Settings",
+        url: "/settings",
+        icon: Settings,
+        roles: ["citizen", "officer", "merchant", "admin"],
     },
 ];
 

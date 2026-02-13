@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback } from "react";
 import { Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useNetwork } from "@/hooks/use-network";
 
 interface OfflineToggleProps {
     className?: string;
@@ -11,19 +12,10 @@ interface OfflineToggleProps {
 }
 
 export function OfflineToggle({ className, onToggle }: OfflineToggleProps) {
-    const [isOnline, setIsOnline] = useState(true);
-    const [mounted, setMounted] = useState(false);
+    const { online, mounted } = useNetwork();
 
-    useEffect(() => {
-        setMounted(true);
-        if (typeof window !== "undefined") {
-            setIsOnline(navigator.onLine);
-        }
-    }, []);
-
-    const handleToggle = () => {
-        const newState = !isOnline;
-        setIsOnline(newState);
+    const handleToggle = useCallback(() => {
+        const newState = !online;
 
         // Override navigator.onLine for demo purposes
         if (typeof window !== "undefined") {
@@ -33,12 +25,12 @@ export function OfflineToggle({ className, onToggle }: OfflineToggleProps) {
                 value: newState,
             });
 
-            // Dispatch event to trigger listeners
+            // Dispatch native event to trigger all listeners (including useNetwork)
             window.dispatchEvent(new Event(newState ? "online" : "offline"));
         }
 
         onToggle?.(newState);
-    };
+    }, [online, onToggle]);
 
     if (!mounted) {
         return (
@@ -56,19 +48,30 @@ export function OfflineToggle({ className, onToggle }: OfflineToggleProps) {
 
     return (
         <Button
-            variant="outline"
+            variant={online ? "outline" : "destructive"}
             size="sm"
             onClick={handleToggle}
-            className={cn("gap-2", className)}
+            className={cn(
+                "gap-2 transition-all duration-300",
+                !online && "animate-pulse",
+                className
+            )}
         >
-            {isOnline ? (
+            {online ? (
                 <>
-                    <Wifi className="h-4 w-4 text-accent" />
+                    <span className="relative flex h-2.5 w-2.5">
+                        <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                    </span>
+                    <Wifi className="h-4 w-4" />
                     <span>Online</span>
                 </>
             ) : (
                 <>
-                    <WifiOff className="h-4 w-4 text-warning" />
+                    <span className="relative flex h-2.5 w-2.5">
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+                    </span>
+                    <WifiOff className="h-4 w-4" />
                     <span>Offline</span>
                 </>
             )}

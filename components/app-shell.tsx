@@ -5,6 +5,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { AppSidebar } from "@/components/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { BottomNav } from "@/components/bottom-nav";
+import { OfflineToggle } from "@/components/offline-toggle";
 
 // Routes that should NOT show the sidebar/header
 const FULL_SCREEN_ROUTES = ["/auth"];
@@ -24,19 +25,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <AppSidebar />
             </div>
             <SidebarInset>
-                <header className="hidden md:flex h-14 shrink-0 items-center gap-2 border-b px-4">
-                    <SidebarTrigger className="-ml-1" />
-                    <Separator orientation="vertical" className="mr-2 h-4" />
+                <header className="hidden md:flex h-14 shrink-0 items-center justify-between gap-2 border-b px-4">
                     <div className="flex items-center gap-2">
-                        <h1 className="text-sm font-semibold text-primary">UPA Pay</h1>
+                        <SidebarTrigger className="-ml-1" />
+                        <Separator orientation="vertical" className="mr-2 h-4" />
+                        <h1 className="text-sm font-semibold text-primary">SaralPay</h1>
                         <span className="text-xs text-muted-foreground hidden sm:inline">
                             Unified Payment Address for Nepal
                         </span>
                     </div>
+                    <OfflineToggle />
                 </header>
-                {/* Mobile header — compact, no sidebar trigger */}
-                <header className="flex md:hidden h-12 shrink-0 items-center justify-center border-b px-4">
-                    <h1 className="text-sm font-semibold text-primary">UPA Pay</h1>
+                {/* Mobile header — compact with network toggle */}
+                <header className="flex md:hidden h-12 shrink-0 items-center justify-between border-b px-4">
+                    <h1 className="text-sm font-semibold text-primary">SaralPay</h1>
+                    <OfflineToggle />
                 </header>
                 <main className="flex-1 overflow-auto pb-24 md:pb-0">
                     {children}
@@ -46,3 +49,4 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </SidebarProvider>
     );
 }
+
