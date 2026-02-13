@@ -84,17 +84,32 @@ export async function POST(request: NextRequest) {
         .eq("intent_code", qrPayload.intent?.id || "")
         .single();
 
+      // Resolve payer UPA if available
+      let payerUpaId = null;
+      if (qrPayload.metadata?.payerUPA) {
+        const { data: payerUpa } = await supabase
+          .from("upas")
+          .select("id")
+          .eq("address", qrPayload.metadata.payerUPA)
+          .single();
+        payerUpaId = payerUpa?.id || null;
+      }
+
       const { error } = await supabase
         .from("transactions")
         .insert({
           tx_id: txId,
           upa_id: upa?.id || qrPayload.upa_id,
           intent_id: intent?.id || qrPayload.intent_id,
+          tx_type: qrPayload.tx_type || "payment",
           amount: qrPayload.amount,
           currency: qrPayload.currency || "NPR",
           payer_name: qrPayload.payer_name || qrPayload.metadata?.payerName,
           payer_id: qrPayload.payer_id || qrPayload.metadata?.payerId,
+          payer_upa: payerUpaId,
+          receiver_upa: upa?.id || null,
           wallet_provider: walletProvider,
+          payment_source: qrPayload.payment_source || walletProvider || "wallet",
           status: "settled",
           mode: "online",
           metadata: {
