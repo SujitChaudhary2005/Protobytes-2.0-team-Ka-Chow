@@ -305,7 +305,7 @@ function CitizenHome() {
                 <Button
                     variant="outline"
                     className="h-20 flex-col gap-1.5 hover:bg-blue-50 hover:border-blue-300"
-                    onClick={() => router.push("/pay/scan")}
+                    onClick={() => router.push("/pay?mode=qr")}
                 >
                     <ScanLine className="h-5 w-5 text-blue-600" />
                     <span className="text-xs font-medium">Scan QR</span>
@@ -337,7 +337,7 @@ function CitizenHome() {
                 <Button
                     variant="outline"
                     className="h-20 flex-col gap-1.5 hover:bg-purple-50 hover:border-purple-300"
-                    onClick={() => router.push("/pay/nfc")}
+                    onClick={() => router.push("/pay?mode=nfc")}
                 >
                     <Smartphone className="h-5 w-5 text-purple-600" />
                     <span className="text-xs font-medium">NFC Pay</span>
@@ -345,7 +345,7 @@ function CitizenHome() {
                 <Button
                     variant="outline"
                     className="h-20 flex-col gap-1.5 hover:bg-slate-50 hover:border-slate-300"
-                    onClick={() => router.push("/pay/scan")}
+                    onClick={() => router.push("/pay?mode=qr")}
                 >
                     <Landmark className="h-5 w-5 text-slate-600" />
                     <span className="text-xs font-medium">Govt Pay</span>

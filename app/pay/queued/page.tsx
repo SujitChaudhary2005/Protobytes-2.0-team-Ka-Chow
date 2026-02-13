@@ -7,13 +7,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNetwork } from "@/hooks/use-network";
 import { getQueuedTransactions, updateTransactionStatus, db } from "@/lib/db";
 import type { QueuedTransaction } from "@/lib/db";
-import { Clock, RefreshCw, Wifi, WifiOff, ArrowLeft, Loader2, AlertTriangle, CheckCircle2, XCircle, Trash2 } from "lucide-react";
+import { Clock, RefreshCw, Wifi, WifiOff, ArrowLeft, Loader2, AlertTriangle, CheckCircle2, XCircle, Trash2, Link as LinkIcon } from "lucide-react";
+import { useWallet } from "@/contexts/wallet-context";
 import { toast } from "sonner";
 import { requestBackgroundSync } from "@/hooks/use-service-worker";
+import { formatCurrency } from "@/lib/utils";
 
 function QueuedContent() {
     const router = useRouter();
     const { online } = useNetwork();
+    const { offlineWallet, saralPayBalance } = useWallet();
     const [queuedItems, setQueuedItems] = useState<QueuedTransaction[]>([]);
     const [failedItems, setFailedItems] = useState<QueuedTransaction[]>([]);
     const [syncing, setSyncing] = useState(false);
@@ -182,6 +185,12 @@ function QueuedContent() {
                             <ArrowLeft className="h-4 w-4 mr-2" />
                             Back to Home
                         </Button>
+                        {offlineWallet.loaded && (
+                            <Button variant="outline" className="w-full" onClick={() => router.push("/pay/settings")}>
+                                <LinkIcon className="h-4 w-4 mr-2" />
+                                View SaralPay Wallet ({formatCurrency(saralPayBalance)})
+                            </Button>
+                        )}
                     </div>
                 </CardContent>
             </Card>

@@ -50,15 +50,9 @@ const navItems: NavItem[] = [
         roles: ["citizen"],
     },
     {
-        title: "Scan & Pay",
-        url: "/pay/scan",
+        title: "Pay",
+        url: "/pay",
         icon: ScanLine,
-        roles: ["citizen"],
-    },
-    {
-        title: "NFC Tap & Pay",
-        url: "/pay/nfc",
-        icon: Smartphone,
         roles: ["citizen"],
     },
     {
@@ -105,6 +99,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
     const isActive = (url: string) => {
         if (url === "/") return pathname === "/";
+        if (url === "/pay") return pathname.startsWith("/pay") && pathname !== "/pay/settings" && pathname !== "/pay/success" && pathname !== "/pay/confirm" && pathname !== "/pay/c2c" && pathname !== "/pay/bills" && pathname !== "/pay/nid" && pathname !== "/pay/queued";
         return pathname.startsWith(url);
     };
 

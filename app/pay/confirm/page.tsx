@@ -13,7 +13,8 @@ import { queueTransaction } from "@/lib/db";
 import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { VerificationPanel } from "@/components/verification-panel";
 import type { StaticQRPayload } from "@/types";
-import { Shield, Wifi, WifiOff, Loader2, AlertTriangle } from "lucide-react";
+import { Shield, Wifi, WifiOff, Loader2, AlertTriangle, QrCode, Smartphone, Link as LinkIcon } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 function ConfirmContent() {
     const router = useRouter();
@@ -33,6 +34,9 @@ function ConfirmContent() {
     const [qrNonce, setQrNonce] = useState("");
     const [qrTimestamp, setQrTimestamp] = useState(0);
 
+    // Payment method (qr or nfc)
+    const [paymentMethod, setPaymentMethod] = useState<"qr" | "nfc" | null>(null);
+
     // Citizen-entered fields
     const [payerName, setPayerName] = useState("");
     const [payerId, setPayerId] = useState("");
@@ -41,6 +45,8 @@ function ConfirmContent() {
 
     useEffect(() => {
         const data = searchParams.get("data");
+        const method = searchParams.get("method") as "qr" | "nfc" | null;
+        setPaymentMethod(method || "qr"); // Default to QR if not specified
         if (!data) {
             setError("No payment data received");
             return;
@@ -264,7 +270,7 @@ function ConfirmContent() {
                     walletProvider: "upa_pay",
                 });
 
-                router.push("/pay/queued");
+                router.push(`/pay/queued?method=${paymentMethod || "qr"}`);
             }
         } catch (err: any) {
             setError(err.message || "Payment failed");
@@ -280,7 +286,7 @@ function ConfirmContent() {
                     <CardContent className="p-6 text-center space-y-4">
                         <AlertTriangle className="h-10 w-10 text-destructive mx-auto" />
                         <p className="text-destructive">{error}</p>
-                        <Button variant="outline" onClick={() => router.push("/pay/scan")}>
+                        <Button variant="outline" onClick={() => router.push("/pay?mode=qr")}>
                             Try Again
                         </Button>
                     </CardContent>
@@ -306,12 +312,29 @@ function ConfirmContent() {
                 </p>
             </div>
 
-            {/* Connection Status */}
-            <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 ${
-                online ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
-            }`}>
-                {online ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
-                {online ? "Online — will settle instantly" : "Offline — will queue for later"}
+            {/* Connection Status & Method Badge */}
+            <div className="flex items-center gap-2">
+                <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 flex-1 ${
+                    online ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
+                }`}>
+                    {online ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+                    {online ? "Online — will settle instantly" : "Offline — will queue for later"}
+                </div>
+                {paymentMethod && (
+                    <Badge variant="outline" className="gap-1.5">
+                        {paymentMethod === "qr" ? (
+                            <>
+                                <QrCode className="h-3 w-3" />
+                                QR Code
+                            </>
+                        ) : (
+                            <>
+                                <Smartphone className="h-3 w-3" />
+                                NFC
+                            </>
+                        )}
+                    </Badge>
+                )}
             </div>
 
             {/* SaralPay Wallet Balance */}
