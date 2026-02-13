@@ -38,6 +38,9 @@ import {
     Lock,
     ShieldCheck,
     Loader2,
+    Code2,
+    ChevronDown,
+    BarChart3,
 } from "lucide-react";
 import {
     Select,

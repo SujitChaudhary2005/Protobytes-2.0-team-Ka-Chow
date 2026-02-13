@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useCallback } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { QRCodeDisplay, uploadQRToStorage } from "@/components/qr-code";
@@ -11,15 +11,6 @@ import { Transaction } from "@/types";
 import { RouteGuard } from "@/components/route-guard";
 import { useWallet } from "@/contexts/wallet-context";
 import { MerchantRegistration } from "@/components/merchant-registration";
-import { Area, AreaChart, Bar, BarChart as RechartsBarChart, CartesianGrid, Pie, PieChart as RechartsPieChart, XAxis, YAxis } from "recharts";
-import {
-    ChartContainer,
-    ChartLegend,
-    ChartLegendContent,
-    ChartTooltip,
-    ChartTooltipContent,
-    type ChartConfig,
-} from "@/components/ui/chart";
 import {
     QrCode,
     Download,
@@ -36,6 +27,7 @@ import {
     CreditCard,
     PieChart,
     Receipt,
+    Smartphone,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
@@ -203,83 +195,6 @@ function MerchantDashboard() {
 
     const [expandedTx, setExpandedTx] = useState<string | null>(null);
 
-    // ─── Sales trend chart ─────────────────────────────────────────────
-    const [chartTimeRange, setChartTimeRange] = useState("90d");
-
-    const salesChartConfig: ChartConfig = {
-        revenue: { label: "Revenue", color: "var(--chart-2)" },
-        pending: { label: "Pending", color: "var(--chart-3)" },
-    };
-
-    const salesChartData = useMemo(() => {
-        const byDate: Record<string, { revenue: number; pending: number }> = {};
-        merchantTx.forEach((tx) => {
-            const d = new Date(tx.timestamp);
-            const key = d.toISOString().split("T")[0];
-            if (!byDate[key]) byDate[key] = { revenue: 0, pending: 0 };
-            if (tx.status === "settled") byDate[key].revenue += tx.amount;
-            else byDate[key].pending += tx.amount;
-        });
-        return Object.entries(byDate)
-            .map(([date, v]) => ({ date, ...v }))
-            .sort((a, b) => a.date.localeCompare(b.date));
-    }, [merchantTx]);
-
-    const filteredSalesChartData = useMemo(() => {
-        if (salesChartData.length === 0) return [];
-        const refDate = new Date(salesChartData[salesChartData.length - 1].date);
-        let days = 90;
-        if (chartTimeRange === "30d") days = 30;
-        else if (chartTimeRange === "7d") days = 7;
-        const start = new Date(refDate);
-        start.setDate(start.getDate() - days);
-        return salesChartData.filter((item) => new Date(item.date) >= start);
-    }, [salesChartData, chartTimeRange]);
-
-    // ─── Revenue by Service Pie ─────────────────────────────────────────
-    const PIE_COLORS = ["hsl(221, 83%, 53%)", "hsl(142, 71%, 45%)", "hsl(38, 92%, 50%)", "hsl(280, 65%, 60%)", "hsl(0, 84%, 60%)", "hsl(190, 80%, 45%)"];
-
-    const servicePieData = useMemo(() => {
-        const byIntent: Record<string, number> = {};
-        merchantTx.filter(t => t.status === "settled").forEach(tx => {
-            const key = (tx.intent || "other").toLowerCase().replace(/\s+/g, "_");
-            byIntent[key] = (byIntent[key] || 0) + tx.amount;
-        });
-        return Object.entries(byIntent)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 5)
-            .map(([name, value]) => ({ name, value, fill: `var(--color-${name})` }));
-    }, [merchantTx]);
-
-    const servicePieConfig: ChartConfig = useMemo(() => {
-        const cfg: ChartConfig = { value: { label: "Amount" } };
-        servicePieData.forEach((d, i) => {
-            cfg[d.name] = { label: d.name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), color: PIE_COLORS[i % PIE_COLORS.length] };
-        });
-        return cfg;
-    }, [servicePieData]);
-
-    // ─── Online vs Offline Bar ──────────────────────────────────────────
-    const modeBarData = useMemo(() => {
-        const getWeekKey = (d: Date) => { const s = new Date(d); s.setDate(s.getDate() - s.getDay()); return s.toISOString().split("T")[0]; };
-        const byWeek: Record<string, { online: number; offline: number }> = {};
-        merchantTx.filter(t => t.status === "settled").forEach(tx => {
-            const key = getWeekKey(new Date(tx.timestamp));
-            if (!byWeek[key]) byWeek[key] = { online: 0, offline: 0 };
-            if (tx.mode === "offline") byWeek[key].offline += tx.amount;
-            else byWeek[key].online += tx.amount;
-        });
-        return Object.entries(byWeek)
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .slice(-6)
-            .map(([key, v]) => ({ week: new Date(key).toLocaleDateString("en-US", { month: "short", day: "numeric" }), ...v }));
-    }, [merchantTx]);
-
-    const modeBarConfig: ChartConfig = {
-        online: { label: "Online", color: "hsl(142, 71%, 45%)" },
-        offline: { label: "Offline", color: "hsl(38, 92%, 50%)" },
-    };
-
     return (
         <div className="p-4 md:p-6 space-y-6">
             <div className="flex items-center justify-between">
@@ -337,138 +252,12 @@ function MerchantDashboard() {
 
             {activeTab === "overview" ? (
                 <div className="space-y-6">
-                    {/* ─── Sales Trend Chart ─────────────────────────────── */}
-                    <Card className="pt-0">
-                        <CardHeader className="flex items-center gap-2 space-y-0 border-b py-5 sm:flex-row">
-                            <div className="grid flex-1 gap-1">
-                                <CardTitle className="text-base flex items-center gap-2">
-                                    <TrendingUp className="h-4 w-4 text-primary" />
-                                    Sales Trend
-                                </CardTitle>
-                                <CardDescription>Daily revenue vs pending amounts</CardDescription>
-                            </div>
-                            <Select value={chartTimeRange} onValueChange={setChartTimeRange}>
-                                <SelectTrigger className="hidden w-[160px] rounded-lg sm:ml-auto sm:flex" aria-label="Select time range">
-                                    <SelectValue placeholder="Last 3 months" />
-                                </SelectTrigger>
-                                <SelectContent className="rounded-xl">
-                                    <SelectItem value="90d" className="rounded-lg">Last 3 months</SelectItem>
-                                    <SelectItem value="30d" className="rounded-lg">Last 30 days</SelectItem>
-                                    <SelectItem value="7d" className="rounded-lg">Last 7 days</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </CardHeader>
-                        <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
-                            {filteredSalesChartData.length > 0 ? (
-                                <ChartContainer config={salesChartConfig} className="aspect-auto h-[250px] w-full">
-                                    <AreaChart data={filteredSalesChartData}>
-                                        <defs>
-                                            <linearGradient id="fillMerchantRevenue" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="var(--color-revenue)" stopOpacity={0.8} />
-                                                <stop offset="95%" stopColor="var(--color-revenue)" stopOpacity={0.1} />
-                                            </linearGradient>
-                                            <linearGradient id="fillMerchantPending" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="var(--color-pending)" stopOpacity={0.8} />
-                                                <stop offset="95%" stopColor="var(--color-pending)" stopOpacity={0.1} />
-                                            </linearGradient>
-                                        </defs>
-                                        <CartesianGrid vertical={false} />
-                                        <XAxis
-                                            dataKey="date"
-                                            tickLine={false}
-                                            axisLine={false}
-                                            tickMargin={8}
-                                            minTickGap={32}
-                                            tickFormatter={(value) => new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                                        />
-                                        <ChartTooltip
-                                            cursor={false}
-                                            content={
-                                                <ChartTooltipContent
-                                                    labelFormatter={(value) => new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                                                    indicator="dot"
-                                                />
-                                            }
-                                        />
-                                        <Area dataKey="pending" type="natural" fill="url(#fillMerchantPending)" stroke="var(--color-pending)" stackId="a" />
-                                        <Area dataKey="revenue" type="natural" fill="url(#fillMerchantRevenue)" stroke="var(--color-revenue)" stackId="a" />
-                                        <ChartLegend content={<ChartLegendContent />} />
-                                    </AreaChart>
-                                </ChartContainer>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
-                                    <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
-                                    <p className="text-sm">No sales data for chart</p>
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
-
-                    {/* ─── Pie + Bar Analytics Row ──────────────────────── */}
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <Card>
-                            <CardHeader className="pb-2">
-                                <CardTitle className="text-sm flex items-center gap-2">
-                                    <PieChart className="h-4 w-4 text-primary" />
-                                    Revenue by Service
-                                </CardTitle>
-                                <CardDescription className="text-xs">Breakdown by service type</CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                {servicePieData.length > 0 ? (
-                                    <ChartContainer config={servicePieConfig} className="mx-auto aspect-square max-h-[250px]">
-                                        <RechartsPieChart>
-                                            <ChartTooltip content={<ChartTooltipContent nameKey="name" hideLabel />} />
-                                            <Pie data={servicePieData} dataKey="value" nameKey="name" innerRadius={55} strokeWidth={5} />
-                                            <ChartLegend content={<ChartLegendContent nameKey="name" />} />
-                                        </RechartsPieChart>
-                                    </ChartContainer>
-                                ) : (
-                                    <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
-                                        <PieChart className="h-10 w-10 opacity-20 mb-2" />
-                                        <p className="text-sm">No revenue data</p>
-                                    </div>
-                                )}
-                            </CardContent>
-                        </Card>
-
-                        <Card>
-                            <CardHeader className="pb-2">
-                                <CardTitle className="text-sm flex items-center gap-2">
-                                    <BarChart3 className="h-4 w-4 text-primary" />
-                                    Online vs Offline Sales
-                                </CardTitle>
-                                <CardDescription className="text-xs">Weekly payment mode comparison</CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                {modeBarData.length > 0 ? (
-                                    <ChartContainer config={modeBarConfig} className="aspect-auto h-[250px] w-full">
-                                        <RechartsBarChart data={modeBarData}>
-                                            <CartesianGrid vertical={false} />
-                                            <XAxis dataKey="week" tickLine={false} axisLine={false} tickMargin={8} fontSize={11} />
-                                            <YAxis tickLine={false} axisLine={false} width={50} fontSize={11} tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} />
-                                            <ChartTooltip content={<ChartTooltipContent />} />
-                                            <Bar dataKey="online" fill="var(--color-online)" radius={[4, 4, 0, 0]} />
-                                            <Bar dataKey="offline" fill="var(--color-offline)" radius={[4, 4, 0, 0]} />
-                                            <ChartLegend content={<ChartLegendContent />} />
-                                        </RechartsBarChart>
-                                    </ChartContainer>
-                                ) : (
-                                    <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
-                                        <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
-                                        <p className="text-sm">No data yet</p>
-                                    </div>
-                                )}
-                            </CardContent>
-                        </Card>
-                    </div>
-
-                    {/* Revenue by Service (detail list) */}
+                    {/* Revenue by Service */}
                     {Object.keys(intentBreakdown).length > 0 && (
                         <Card>
                             <CardHeader className="pb-3">
                                 <CardTitle className="text-base flex items-center gap-2">
-                                    <Receipt className="h-4 w-4 text-primary" /> Service Breakdown
+                                    <PieChart className="h-4 w-4 text-primary" /> Revenue by Service
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="pt-0">

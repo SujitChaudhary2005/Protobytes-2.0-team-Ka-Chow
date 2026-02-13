@@ -51,7 +51,8 @@ export default function C2CPaymentPage() {
 
 function C2CPayment() {
     const router = useRouter();
-    const { balance, updateBalance, addTransaction, user, nid, wallet, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit } = useWallet();
+    const searchParams = useSearchParams();
+    const { balance, updateBalance, addTransaction, creditUser, user, nid, wallet, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit } = useWallet();
     const { online } = useNetwork();
     const [toUPA, setToUPA] = useState("");
     const [scannedName, setScannedName] = useState("");

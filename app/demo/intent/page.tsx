@@ -69,7 +69,7 @@ export default function IntentVisualizationPage() {
     const [activeTab, setActiveTab] = useState<"side-by-side" | "overlay">("side-by-side");
 
     return (
-        <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto">
+        <div className="p-4 md:p-6 space-y-6">
             <div className="text-center space-y-2">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
                     <ArrowLeftRight className="h-3.5 w-3.5" />

@@ -56,6 +56,9 @@ import {
     FileText,
     IdCard,
     Building2,
+    TrendingUp,
+    BarChart3,
+    DollarSign,
 } from "lucide-react";
 
 export default function CitizenPage() {
@@ -248,7 +251,7 @@ function CitizenHome() {
     }
 
     return (
-        <div className="p-4 md:p-6 space-y-5 max-w-lg mx-auto">
+        <div className="p-4 md:p-6 space-y-5">
             {/* Balance Card */}
             <Card className="bg-gradient-to-br from-blue-600 to-blue-700 text-white border-0">
                 <CardContent className="p-5">
