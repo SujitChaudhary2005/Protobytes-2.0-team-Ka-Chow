@@ -82,7 +82,7 @@ export function NIDCardDisplay({ nid, loading = false }: NIDCardDisplayProps) {
                 <div className="w-full h-full flex items-center justify-center">
                   <Loader2 className="h-6 w-6 text-white/60 animate-spin" />
                 </div>
-              ) : nid.photoUrl && (nid.photoUrl.startsWith("http") || nid.photoUrl.startsWith("/mock-nid/")) ? (
+              ) : nid.photoUrl && (nid.photoUrl.startsWith("http") || nid.photoUrl.startsWith("/")) ? (
                 <>
                   {!imageLoaded && (
                     <div className="absolute inset-0 bg-white/10 animate-pulse" />
@@ -156,7 +156,7 @@ export function NIDCardDisplay({ nid, loading = false }: NIDCardDisplayProps) {
                 {loading || !showData ? (
                   <div className="h-3 w-8 bg-white/15 rounded animate-pulse mt-0.5" />
                 ) : (
-                  <p className="text-[10px] text-white/90 leading-tight">M</p>
+                  <p className="text-[10px] text-white/90 leading-tight">{nid.gender === "F" ? "F" : nid.gender === "O" ? "O" : "M"}</p>
                 )}
               </div>
               <div className="flex-1">

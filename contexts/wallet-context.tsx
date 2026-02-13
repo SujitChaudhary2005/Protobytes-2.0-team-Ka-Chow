@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
-import { Wallet, Transaction, UserRole, AppUser, MerchantProfile, NIDCard, BankAccount, OfflineLimit, MOCK_NID_DATABASE } from "@/types";
+import { Wallet, Transaction, UserRole, AppUser, MerchantProfile, NIDCard, BankAccount, OfflineWallet, MOCK_NID_DATABASE } from "@/types";
 import { generateKeyPair, keyToHex } from "@/lib/crypto";
 import { SecureKeyStore } from "@/lib/secure-storage";
 
@@ -26,19 +26,19 @@ const CITIZEN_NID_MAP: Record<string, string> = {
 
 // UPA → user ID mapping (for crediting receivers in C2C)
 export const UPA_TO_USER: Record<string, string> = {
-    "ram@upa.np":   "c1000000-0000-0000-0000-000000000001",
+    "ram@upa.np": "c1000000-0000-0000-0000-000000000001",
     "anita@upa.np": "c1000000-0000-0000-0000-000000000005",
-    "sita@upa.np":  "c1000000-0000-0000-0000-000000000002",
-    "hari@upa.np":  "c1000000-0000-0000-0000-000000000003",
+    "sita@upa.np": "c1000000-0000-0000-0000-000000000002",
+    "hari@upa.np": "c1000000-0000-0000-0000-000000000003",
 };
 
 // Demo users — matches supabase/02_seed.sql
 const DEMO_USERS: AppUser[] = [
-    { id: "c1000000-0000-0000-0000-000000000001", email: "citizen@demo.np",  name: "Ram Bahadur Thapa", role: "citizen",  phone: "+9779841000001", nidNumber: "RAM-KTM-1990-4521",  upa_id: "ram@upa.np" },
-    { id: "c1000000-0000-0000-0000-000000000005", email: "citizen2@demo.np", name: "Anita Gurung",      role: "citizen",  phone: "+9779841000005", nidNumber: "ANITA-BRT-1998-5643", upa_id: "anita@upa.np" },
-    { id: "c1000000-0000-0000-0000-000000000002", email: "officer@demo.np",  name: "Sita Sharma",       role: "officer",  phone: "+9779841000002" },
-    { id: "c1000000-0000-0000-0000-000000000003", email: "merchant@demo.np", name: "Hari Prasad Oli",   role: "merchant", phone: "+9779841000003" },
-    { id: "c1000000-0000-0000-0000-000000000004", email: "admin@demo.np",    name: "Gita Adhikari",     role: "admin",    phone: "+9779841000004" },
+    { id: "c1000000-0000-0000-0000-000000000001", email: "citizen@demo.np", name: "Ram Bahadur Thapa", role: "citizen", phone: "+9779841000001", nidNumber: "RAM-KTM-1990-4521", upa_id: "ram@upa.np" },
+    { id: "c1000000-0000-0000-0000-000000000005", email: "citizen2@demo.np", name: "Anita Gurung", role: "citizen", phone: "+9779841000005", nidNumber: "ANITA-BRT-1998-5643", upa_id: "anita@upa.np" },
+    { id: "c1000000-0000-0000-0000-000000000002", email: "officer@demo.np", name: "Sita Sharma", role: "officer", phone: "+9779841000002" },
+    { id: "c1000000-0000-0000-0000-000000000003", email: "merchant@demo.np", name: "Hari Prasad Oli", role: "merchant", phone: "+9779841000003" },
+    { id: "c1000000-0000-0000-0000-000000000004", email: "admin@demo.np", name: "Gita Adhikari", role: "admin", phone: "+9779841000004" },
 ];
 
 export { DEMO_USERS };
@@ -63,8 +63,9 @@ interface WalletContextType {
     // NID & Bank
     nid: NIDCard | null;
     linkedBank: BankAccount | null;
-    // Offline limits
-    offlineLimit: OfflineLimit;
+    // SaralPay Offline Wallet
+    offlineWallet: OfflineWallet;
+    saralPayBalance: number;
     // Actions
     initializeWallet: () => void;
     addTransaction: (transaction: Transaction) => void;
@@ -75,9 +76,10 @@ interface WalletContextType {
     // New actions
     linkNID: (nidNumber: string) => NIDCard | null;
     linkBank: (bank: BankAccount) => void;
-    setOfflineLimit: (limit: number) => void;
-    useOfflineLimit: (amount: number) => boolean;
-    resetOfflineLimit: () => void;
+    // SaralPay Wallet actions
+    loadSaralPay: (amount: number) => boolean;
+    spendFromSaralPay: (amount: number) => boolean;
+    unloadSaralPay: () => void;
     canSpendOffline: (amount: number) => boolean;
     deductFromBank: (amount: number) => void;
     creditUser: (upaAddress: string, amount: number, tx: Transaction) => void;
@@ -96,9 +98,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const [merchantProfile, setMerchantProfile] = useState<MerchantProfile | null>(null);
     const [nid, setNid] = useState<NIDCard | null>(null);
     const [linkedBank, setLinkedBank] = useState<BankAccount | null>(null);
-    const [offlineLimit, setOfflineLimitState] = useState<OfflineLimit>({
-        maxAmount: 5000,
-        currentUsed: 0,
+    const [offlineWallet, setOfflineWalletState] = useState<OfflineWallet>({
+        loaded: false,
+        balance: 0,
+        initialLoadAmount: 0,
+        loadedAt: 0,
         lastReset: Date.now(),
     });
 
@@ -188,12 +192,32 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             } else { setLinkedBank(null); }
         }
 
-        // Load offline limit
-        const storedLimit = localStorage.getItem(uKey("upa_offline_limit"));
-        if (storedLimit) {
-            try { setOfflineLimitState(JSON.parse(storedLimit)); } catch { /* ignore */ }
+        // Load SaralPay offline wallet
+        const storedWallet2 = localStorage.getItem(uKey("upa_saral_pay"));
+        if (storedWallet2) {
+            try { setOfflineWalletState(JSON.parse(storedWallet2)); } catch { /* ignore */ }
         } else {
-            setOfflineLimitState({ maxAmount: 5000, currentUsed: 0, lastReset: Date.now() });
+            // Migrate from old offline limit if it exists
+            const oldLimit = localStorage.getItem(uKey("upa_offline_limit"));
+            if (oldLimit) {
+                try {
+                    const parsed = JSON.parse(oldLimit);
+                    const migrated: OfflineWallet = {
+                        loaded: parsed.currentUsed > 0 || parsed.maxAmount > 0,
+                        balance: parsed.maxAmount - (parsed.currentUsed || 0),
+                        initialLoadAmount: parsed.maxAmount || 5000,
+                        loadedAt: parsed.lastReset || Date.now(),
+                        lastReset: parsed.lastReset || Date.now(),
+                    };
+                    setOfflineWalletState(migrated);
+                    localStorage.setItem(uKey("upa_saral_pay"), JSON.stringify(migrated));
+                    localStorage.removeItem(uKey("upa_offline_limit"));
+                } catch {
+                    setOfflineWalletState({ loaded: false, balance: 0, initialLoadAmount: 0, loadedAt: 0, lastReset: Date.now() });
+                }
+            } else {
+                setOfflineWalletState({ loaded: false, balance: 0, initialLoadAmount: 0, loadedAt: 0, lastReset: Date.now() });
+            }
         }
 
         // Load wallet — per-user initial balance
@@ -364,41 +388,95 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem(uKey("upa_linked_bank"), JSON.stringify(bank));
     }, []);
 
-    /**
-     * Set offline spending limit
-     */
-    const setOfflineLimit = useCallback((limit: number) => {
-        const newLimit: OfflineLimit = { maxAmount: limit, currentUsed: offlineLimit.currentUsed, lastReset: offlineLimit.lastReset };
-        setOfflineLimitState(newLimit);
-        localStorage.setItem(uKey("upa_offline_limit"), JSON.stringify(newLimit));
-    }, [offlineLimit]);
+    // ── Computed SaralPay balance ──
+    const saralPayBalance = offlineWallet.balance;
 
     /**
-     * Check if amount is within offline spending limit
+     * Load SaralPay wallet — deducts from main balance, loads into SaralPay.
+     * Returns true if successful, false if insufficient main balance.
+     */
+    const loadSaralPay = useCallback((amount: number): boolean => {
+        if (amount <= 0) return false;
+        // Check main balance (get fresh value from state)
+        const currentBal = balance;
+        if (amount > currentBal) return false;
+
+        // Deduct from main balance
+        setBalance((prev) => {
+            const newBalance = prev - amount;
+            if (wallet) {
+                const updated = { ...wallet, balance: newBalance };
+                setWallet(updated);
+                localStorage.setItem(uKey("upa_wallet"), JSON.stringify(updated));
+            }
+            return newBalance;
+        });
+
+        // Load into SaralPay
+        const newWalletState: OfflineWallet = {
+            loaded: true,
+            balance: offlineWallet.balance + amount,
+            initialLoadAmount: offlineWallet.loaded ? offlineWallet.initialLoadAmount + amount : amount,
+            loadedAt: Date.now(),
+            lastReset: offlineWallet.lastReset,
+        };
+        setOfflineWalletState(newWalletState);
+        localStorage.setItem(uKey("upa_saral_pay"), JSON.stringify(newWalletState));
+        return true;
+    }, [balance, offlineWallet, wallet]);
+
+    /**
+     * Spend from SaralPay wallet — returns true if success, false if insufficient.
+     */
+    const spendFromSaralPay = useCallback((amount: number): boolean => {
+        if (amount <= 0) return false;
+        if (amount > offlineWallet.balance) return false;
+        const newWalletState: OfflineWallet = {
+            ...offlineWallet,
+            balance: offlineWallet.balance - amount,
+        };
+        setOfflineWalletState(newWalletState);
+        localStorage.setItem(uKey("upa_saral_pay"), JSON.stringify(newWalletState));
+        return true;
+    }, [offlineWallet]);
+
+    /**
+     * Check if amount can be spent from SaralPay wallet
      */
     const canSpendOffline = useCallback((amount: number): boolean => {
-        return amount <= (offlineLimit.maxAmount - offlineLimit.currentUsed);
-    }, [offlineLimit]);
+        return offlineWallet.loaded && amount <= offlineWallet.balance;
+    }, [offlineWallet]);
 
     /**
-     * Use offline limit — returns true if success, false if exceeded
+     * Unload SaralPay wallet — returns remaining balance back to main wallet.
      */
-    const useOfflineLimit = useCallback((amount: number): boolean => {
-        if (!canSpendOffline(amount)) return false;
-        const newLimit: OfflineLimit = { ...offlineLimit, currentUsed: offlineLimit.currentUsed + amount };
-        setOfflineLimitState(newLimit);
-        localStorage.setItem(uKey("upa_offline_limit"), JSON.stringify(newLimit));
-        return true;
-    }, [offlineLimit, canSpendOffline]);
+    const unloadSaralPay = useCallback(() => {
+        const remaining = offlineWallet.balance;
 
-    /**
-     * Reset offline limit usage (on sync complete)
-     */
-    const resetOfflineLimit = useCallback(() => {
-        const newLimit: OfflineLimit = { maxAmount: offlineLimit.maxAmount, currentUsed: 0, lastReset: Date.now() };
-        setOfflineLimitState(newLimit);
-        localStorage.setItem(uKey("upa_offline_limit"), JSON.stringify(newLimit));
-    }, [offlineLimit.maxAmount]);
+        // Return remaining to main balance
+        if (remaining > 0) {
+            setBalance((prev) => {
+                const newBalance = prev + remaining;
+                if (wallet) {
+                    const updated = { ...wallet, balance: newBalance };
+                    setWallet(updated);
+                    localStorage.setItem(uKey("upa_wallet"), JSON.stringify(updated));
+                }
+                return newBalance;
+            });
+        }
+
+        // Reset SaralPay wallet
+        const resetState: OfflineWallet = {
+            loaded: false,
+            balance: 0,
+            initialLoadAmount: 0,
+            loadedAt: 0,
+            lastReset: Date.now(),
+        };
+        setOfflineWalletState(resetState);
+        localStorage.setItem(uKey("upa_saral_pay"), JSON.stringify(resetState));
+    }, [offlineWallet, wallet]);
 
     /**
      * Mock deduct from bank (NID-linked bank payment)
@@ -412,6 +490,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem(uKey("upa_merchant_profile"));
         localStorage.removeItem(uKey("upa_nid"));
         localStorage.removeItem(uKey("upa_linked_bank"));
+        localStorage.removeItem(uKey("upa_saral_pay"));
         _activeUserId = null;
         setIsAuthenticated(false);
         setUser(null);
@@ -477,7 +556,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 merchantProfile,
                 nid,
                 linkedBank,
-                offlineLimit,
+                offlineWallet,
+                saralPayBalance,
                 initializeWallet,
                 addTransaction,
                 updateBalance,
@@ -486,9 +566,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 registerMerchant,
                 linkNID,
                 linkBank,
-                setOfflineLimit,
-                useOfflineLimit,
-                resetOfflineLimit,
+                loadSaralPay,
+                spendFromSaralPay,
+                unloadSaralPay,
                 canSpendOffline,
                 deductFromBank,
                 creditUser,

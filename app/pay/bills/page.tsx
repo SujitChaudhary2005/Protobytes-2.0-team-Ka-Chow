@@ -55,7 +55,7 @@ type BillStep = "select" | "account" | "confirm" | "success";
 
 function BillPayment() {
     const router = useRouter();
-    const { balance, updateBalance, addTransaction, user, nid, wallet, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit } = useWallet();
+    const { balance, updateBalance, addTransaction, user, nid, wallet, canSpendOffline, spendFromSaralPay, offlineWallet, saralPayBalance } = useWallet();
     const { online } = useNetwork();
     const [step, setStep] = useState<BillStep>("select");
     const [selectedBill, setSelectedBill] = useState<typeof BILL_TYPES[number] | null>(null);
@@ -175,10 +175,14 @@ function BillPayment() {
                 toast.success(`${selectedBill.label} paid successfully!`);
                 setStep("success");
             } else {
-                // ── OFFLINE: enforce limit, sign with Ed25519, queue for later ──
+                // ── OFFLINE: enforce SaralPay wallet balance ──
+                if (!offlineWallet.loaded) {
+                    toast.error("SaralPay wallet not loaded! Go to Settings to load funds.");
+                    setPaying(false);
+                    return;
+                }
                 if (!canSpendOffline(amt)) {
-                    const remaining = offlineLimit.maxAmount - offlineLimit.currentUsed;
-                    toast.error(`Offline limit exceeded. Remaining: NPR ${remaining.toLocaleString()}`);
+                    toast.error(`Insufficient SaralPay balance. Remaining: NPR ${saralPayBalance.toLocaleString()}`);
                     setPaying(false);
                     return;
                 }
@@ -226,7 +230,7 @@ function BillPayment() {
                 setTxId(queuedTxId);
 
                 updateBalance(amt);
-                consumeOfflineLimit(amt);
+                spendFromSaralPay(amt);
                 addTransaction({
                     id: queuedTxId,
                     tx_id: queuedTxId,

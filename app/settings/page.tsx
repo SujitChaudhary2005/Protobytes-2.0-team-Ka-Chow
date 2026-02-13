@@ -54,9 +54,9 @@ export default function SettingsPage() {
         transactions,
         nid,
         linkedBank,
-        offlineLimit,
-        setOfflineLimit,
-        resetOfflineLimit,
+        offlineWallet,
+        saralPayBalance,
+        unloadSaralPay,
         logout,
     } = useWallet();
 
@@ -193,8 +193,8 @@ export default function SettingsPage() {
         );
     }
 
-    const usedPercent = offlineLimit.maxAmount > 0
-        ? Math.min(100, Math.round((offlineLimit.currentUsed / offlineLimit.maxAmount) * 100))
+    const usedPercent = offlineWallet.initialLoadAmount > 0
+        ? Math.min(100, Math.round(((offlineWallet.initialLoadAmount - offlineWallet.balance) / offlineWallet.initialLoadAmount) * 100))
         : 0;
 
     return (
@@ -322,36 +322,46 @@ export default function SettingsPage() {
                 </Card>
             )}
 
-            {/* ── Offline Spending Limits (Citizens) ─────── */}
+            {/* ── SaralPay Offline Wallet (Citizens) ─────── */}
             {role === "citizen" && (
-                <Card>
+                <Card className={offlineWallet.loaded ? "border-amber-200" : ""}>
                     <CardHeader className="pb-3">
                         <CardTitle className="text-base flex items-center gap-2">
                             <WifiOff className="h-4 w-4 text-primary" />
-                            Offline Spending
+                            SaralPay Wallet
                         </CardTitle>
-                        <CardDescription>Manage your offline transaction limits</CardDescription>
+                        <CardDescription>Prepaid offline wallet for NFC &amp; offline payments</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm font-medium">Current Limit</p>
-                                <p className="text-2xl font-bold">{formatCurrency(offlineLimit.maxAmount)}</p>
+                                <p className="text-sm font-medium">Wallet Balance</p>
+                                <p className={`text-2xl font-bold ${offlineWallet.loaded ? "text-amber-700" : "text-muted-foreground"}`}>
+                                    {formatCurrency(saralPayBalance)}
+                                </p>
                             </div>
                             <div className="text-right">
-                                <p className="text-xs text-muted-foreground">Used</p>
-                                <p className="text-sm font-medium">{formatCurrency(offlineLimit.currentUsed)}</p>
+                                <p className="text-xs text-muted-foreground">Status</p>
+                                <p className={`text-sm font-medium ${offlineWallet.loaded ? "text-green-600" : "text-muted-foreground"}`}>
+                                    {offlineWallet.loaded ? "Active" : "Not Loaded"}
+                                </p>
                             </div>
                         </div>
 
                         {/* Progress bar */}
-                        <div className="w-full bg-muted rounded-full h-2.5">
-                            <div
-                                className={`h-2.5 rounded-full transition-all ${usedPercent >= 90 ? "bg-red-500" : usedPercent >= 70 ? "bg-amber-500" : "bg-green-500"}`}
-                                style={{ width: `${usedPercent}%` }}
-                            />
-                        </div>
-                        <p className="text-xs text-muted-foreground text-center">{usedPercent}% used · {formatCurrency(offlineLimit.maxAmount - offlineLimit.currentUsed)} remaining</p>
+                        {offlineWallet.loaded && offlineWallet.initialLoadAmount > 0 && (
+                            <>
+                                <div className="w-full bg-muted rounded-full h-2.5">
+                                    <div
+                                        className={`h-2.5 rounded-full transition-all ${usedPercent >= 90 ? "bg-red-500" : usedPercent >= 70 ? "bg-amber-500" : "bg-emerald-500"}`}
+                                        style={{ width: `${usedPercent}%` }}
+                                    />
+                                </div>
+                                <p className="text-xs text-muted-foreground text-center">
+                                    {usedPercent}% spent · {formatCurrency(saralPayBalance)} remaining
+                                </p>
+                            </>
+                        )}
 
                         <div className="flex gap-2">
                             <Button
@@ -360,19 +370,21 @@ export default function SettingsPage() {
                                 className="flex-1"
                                 onClick={() => router.push("/pay/settings")}
                             >
-                                Adjust Limit
+                                {offlineWallet.loaded ? "Manage Wallet" : "Load Wallet"}
                                 <ChevronRight className="h-4 w-4 ml-1" />
                             </Button>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                    resetOfflineLimit();
-                                    toast.success("Offline usage counter reset");
-                                }}
-                            >
-                                <RefreshCcw className="h-4 w-4" />
-                            </Button>
+                            {offlineWallet.loaded && (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                        unloadSaralPay();
+                                        toast.success("SaralPay wallet unloaded. Funds returned to main wallet.");
+                                    }}
+                                >
+                                    <RefreshCcw className="h-4 w-4" />
+                                </Button>
+                            )}
                         </div>
                     </CardContent>
                 </Card>

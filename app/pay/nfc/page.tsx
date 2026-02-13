@@ -19,12 +19,17 @@ import {
     Fingerprint,
     AlertTriangle,
     Landmark,
+    WifiOff,
+    Wifi,
+    CloudOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import { useWallet } from "@/contexts/wallet-context";
+import { useNetwork } from "@/hooks/use-network";
 import { RouteGuard } from "@/components/route-guard";
 import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
+import { queueTransaction } from "@/lib/db";
 import { createSignalChannel } from "@/lib/nfc-signal";
 
 type NFCStatus =
@@ -66,7 +71,8 @@ export default function NFCPayPageWrapper() {
 
 function NFCPayPage() {
     const router = useRouter();
-    const { wallet, balance, nid, user, addTransaction, updateBalance, creditUser } = useWallet();
+    const { wallet, balance, nid, user, addTransaction, updateBalance, creditUser, offlineWallet, saralPayBalance, canSpendOffline, spendFromSaralPay } = useWallet();
+    const { online } = useNetwork();
     const channelRef = useRef<{ send: (msg: any) => void; close: () => void } | null>(null);
 
     const [nfcStatus, setNfcStatus] = useState<NFCStatus>("checking");
@@ -308,6 +314,18 @@ function NFCPayPage() {
         if (!amount || amount <= 0) { toast.error("Invalid amount"); return; }
         if (amount > balance) { toast.error("Insufficient balance"); return; }
 
+        // ── Offline guard: check SaralPay wallet balance ──
+        if (!online) {
+            if (!offlineWallet.loaded) {
+                toast.error("SaralPay wallet not loaded! Go to Settings to load funds for offline payments.");
+                return;
+            }
+            if (!canSpendOffline(amount)) {
+                toast.error(`Insufficient SaralPay balance! Remaining: ${formatCurrency(saralPayBalance)}`);
+                return;
+            }
+        }
+
         setNfcStatus("processing");
 
         // Simulate biometric
@@ -332,6 +350,7 @@ function NFCPayPage() {
             intentId = "nfc_transfer";
         }
 
+        const isOffline = !online;
         const txId = `UPA-${txType.toUpperCase().replace("MERCHANT_PURCHASE", "C2B")}-${String(Date.now()).slice(-6)}`;
         const nonce = `nfc-${txType}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -344,9 +363,12 @@ function NFCPayPage() {
                 payerName: myName, payerUPA: myUPA,
                 paymentType: txType, deviceType: selectedDevice.type, mode: "nfc",
                 nfcNative: hasNativeNFC ? "true" : "false",
+                offlineQueued: isOffline ? "true" : "false",
             },
-            status: "settled" as const, mode: "nfc" as const,
-            nonce, timestamp: Date.now(), settledAt: Date.now(),
+            status: (isOffline ? "queued" : "settled") as "queued" | "settled",
+            mode: (isOffline ? "offline" : "nfc") as "offline" | "nfc",
+            nonce, timestamp: Date.now(),
+            settledAt: isOffline ? undefined : Date.now(),
             walletProvider: "upa_pay", payment_source: "wallet" as const,
         };
 
@@ -356,57 +378,99 @@ function NFCPayPage() {
         // 2) Deduct from wallet
         updateBalance(amount);
 
-        // 3) Signal channel notifications (same-device + cross-device)
+        // 3) If offline, deduct from SaralPay wallet & queue to IndexedDB for later sync
+        if (isOffline) {
+            spendFromSaralPay(amount);
+            try {
+                await queueTransaction({
+                    payload: JSON.stringify({
+                        version: "1.0", upa: selectedDevice.upa || selectedDevice.name,
+                        intent: { id: intentId, category: intentCategory, label: intentLabel },
+                        tx_type: txType, amount, currency: "NPR", metadata: txRecord.metadata,
+                        payer_name: myName, payer_id: myUPA || myId.current,
+                        issuedAt: new Date().toISOString(),
+                        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+                        nonce, type: "offline",
+                    }),
+                    signature: "offline-nfc-" + txId,
+                    publicKey: wallet?.publicKey || "",
+                    timestamp: Date.now(),
+                    nonce,
+                    recipient: selectedDevice.upa || selectedDevice.name,
+                    amount,
+                    intent: intentLabel,
+                    metadata: txRecord.metadata,
+                });
+            } catch { /* queue best-effort */ }
+
+            // Request background sync when connectivity returns
+            if ("serviceWorker" in navigator && "SyncManager" in window) {
+                try {
+                    const reg = await navigator.serviceWorker.ready;
+                    await (reg as any).sync.register("sync-transactions");
+                } catch { /* ignore */ }
+            }
+        }
+
+        // 4) Signal channel notifications (BroadcastChannel works offline for same-device!)
         if (channelRef.current) {
             if (selectedDevice.type === "merchant") {
                 channelRef.current.send({
                     type: "payment_approval",
                     customerId: myId.current, customerName: myName, customerUPA: myUPA,
                     businessId: selectedDevice.id, amount, txId, txType,
+                    isOffline,
                 });
             } else if (selectedDevice.type === "citizen") {
                 channelRef.current.send({
                     type: "c2c_payment_complete",
                     fromCitizenId: myId.current, fromCitizenName: myName, fromUPA: myUPA,
                     toCitizenId: selectedDevice.id, toUPA: selectedDevice.upa,
-                    amount, txId,
+                    amount, txId, isOffline,
                 });
                 if (selectedDevice.upa) creditUser(selectedDevice.upa, amount, txRecord);
             }
         }
 
-        // 4) Persist via API (best-effort)
-        try {
-            if (txType === "c2c") {
-                await fetch("/api/transactions/c2c", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ fromUPA: myUPA, toUPA: selectedDevice.upa, amount, intent: intentLabel, message: `NFC ${txType}`, payerName: myName, nonce }),
-                });
-            } else {
-                await fetch("/api/transactions/settle", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        payload: {
-                            version: "1.0", upa: selectedDevice.upa || selectedDevice.name,
-                            intent: { id: intentId, category: intentCategory, label: intentLabel },
-                            tx_type: txType, amount, currency: "NPR", metadata: txRecord.metadata,
-                            payer_name: myName, payer_id: myUPA || myId.current,
-                            issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
-                            nonce, type: "online",
-                        },
-                    }),
-                });
-            }
-        } catch { /* best-effort */ }
+        // 5) Persist via API — only when online (best-effort)
+        if (!isOffline) {
+            try {
+                if (txType === "c2c") {
+                    await fetch("/api/transactions/c2c", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ fromUPA: myUPA, toUPA: selectedDevice.upa, amount, intent: intentLabel, message: `NFC ${txType}`, payerName: myName, nonce }),
+                    });
+                } else {
+                    await fetch("/api/transactions/settle", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            payload: {
+                                version: "1.0", upa: selectedDevice.upa || selectedDevice.name,
+                                intent: { id: intentId, category: intentCategory, label: intentLabel },
+                                tx_type: txType, amount, currency: "NPR", metadata: txRecord.metadata,
+                                payer_name: myName, payer_id: myUPA || myId.current,
+                                issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
+                                nonce, type: "online",
+                            },
+                        }),
+                    });
+                }
+            } catch { /* best-effort */ }
+        }
 
-        // 5) Add to wallet context
+        // 6) Add to wallet context
         addTransaction(txRecord);
 
         setLastTxId(txId);
         setLastTxType(txType);
         setNfcStatus("success");
         if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 100]);
-        toast.success(`${formatCurrency(amount)} sent to ${selectedDevice.name} [${txType.toUpperCase()}]`);
+
+        if (isOffline) {
+            toast.success(`${formatCurrency(amount)} queued for ${selectedDevice.name} [${txType.toUpperCase()}] — will sync when online`);
+        } else {
+            toast.success(`${formatCurrency(amount)} sent to ${selectedDevice.name} [${txType.toUpperCase()}]`);
+        }
     };
 
     const declinePayment = () => {
@@ -452,41 +516,82 @@ function NFCPayPage() {
                 </Button>
                 <div className="flex-1">
                     <h1 className="text-lg font-bold">NFC Tap & Pay</h1>
-                    <p className="text-xs text-muted-foreground">{hasNativeNFC ? "Native NFC" : "Cross-Device Signal"}</p>
+                    <p className="text-xs text-muted-foreground">
+                        {hasNativeNFC ? "Native NFC" : "Cross-Device Signal"}
+                        {!online && " • Offline Mode"}
+                    </p>
                 </div>
-                <Badge variant={hasNativeNFC ? "default" : "secondary"} className="text-[10px]">
-                    {hasNativeNFC ? "NFC" : "BC"}
-                </Badge>
+                <div className="flex items-center gap-1.5">
+                    <Badge variant={online ? "default" : "outline"} className={`text-[10px] ${!online ? "border-amber-400 text-amber-700 bg-amber-50" : ""}`}>
+                        {online ? <Wifi className="h-3 w-3 mr-1" /> : <WifiOff className="h-3 w-3 mr-1" />}
+                        {online ? "Online" : "Offline"}
+                    </Badge>
+                    <Badge variant={hasNativeNFC ? "default" : "secondary"} className="text-[10px]">
+                        {hasNativeNFC ? "NFC" : "BC"}
+                    </Badge>
+                </div>
             </div>
 
-            {/* Banner */}
-            {!hasNativeNFC && (
-                <Card className="border-blue-200 bg-blue-50">
+            {/* Offline Banner — SaralPay Wallet */}
+            {!online && (
+                <Card className={`${offlineWallet.loaded ? "border-amber-300 bg-amber-50" : "border-red-300 bg-red-50"}`}>
                     <CardContent className="p-3 flex items-start gap-3">
-                        <Zap className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
-                        <div>
-                            <p className="text-sm font-medium text-blue-800">Cross-Device NFC Mode</p>
-                            <p className="text-xs text-blue-700 mt-1">
-                                Works across devices via Supabase Realtime. Open merchant terminal on another phone/tab to demo mobile-to-mobile payments.
+                        <WifiOff className={`h-5 w-5 mt-0.5 shrink-0 ${offlineWallet.loaded ? "text-amber-600" : "text-red-600"}`} />
+                        <div className="flex-1">
+                            <p className={`text-sm font-medium ${offlineWallet.loaded ? "text-amber-800" : "text-red-800"}`}>
+                                {offlineWallet.loaded ? "SaralPay Offline Wallet" : "SaralPay Not Loaded"}
                             </p>
+                            {offlineWallet.loaded ? (
+                                <>
+                                    <p className="text-xs text-amber-700 mt-1">
+                                        Payments will be deducted from your SaralPay wallet and queued for sync.
+                                    </p>
+                                    <div className="flex items-center gap-3 mt-2">
+                                        <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 font-bold">
+                                            <CloudOff className="h-3 w-3 mr-1" />
+                                            SaralPay Balance: {formatCurrency(saralPayBalance)}
+                                        </Badge>
+                                    </div>
+                                </>
+                            ) : (
+                                <p className="text-xs text-red-700 mt-1">
+                                    Load your SaralPay wallet before going offline. Go to Settings → SaralPay to load funds.
+                                </p>
+                            )}
                         </div>
                     </CardContent>
                 </Card>
             )}
 
-            {/* Balance */}
-            <Card className="bg-gradient-to-r from-purple-600 to-blue-600 text-white border-0">
-                <CardContent className="p-4">
-                    <div className="flex justify-between items-center">
-                        <div>
-                            <p className="text-xs text-white/70">Available Balance</p>
-                            <p className="text-2xl font-bold">{formatCurrency(balance)}</p>
-                            <p className="text-[10px] text-white/50 mt-1">{myUPA || "No UPA linked"}</p>
+
+            {/* Balance — shows SaralPay when offline */}
+            {!online && offlineWallet.loaded ? (
+                <Card className="bg-gradient-to-r from-amber-500 to-orange-600 text-white border-0">
+                    <CardContent className="p-4">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <p className="text-xs text-white/70">SaralPay Offline Wallet</p>
+                                <p className="text-2xl font-bold">{formatCurrency(saralPayBalance)}</p>
+                                <p className="text-[10px] text-white/50 mt-1">{myUPA || "No UPA linked"}</p>
+                            </div>
+                            <div className="p-3 bg-white/10 rounded-2xl"><WifiOff className="h-6 w-6" /></div>
                         </div>
-                        <div className="p-3 bg-white/10 rounded-2xl"><Smartphone className="h-6 w-6" /></div>
-                    </div>
-                </CardContent>
-            </Card>
+                    </CardContent>
+                </Card>
+            ) : (
+                <Card className="bg-gradient-to-r from-purple-600 to-blue-600 text-white border-0">
+                    <CardContent className="p-4">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <p className="text-xs text-white/70">Available Balance</p>
+                                <p className="text-2xl font-bold">{formatCurrency(balance)}</p>
+                                <p className="text-[10px] text-white/50 mt-1">{myUPA || "No UPA linked"}</p>
+                            </div>
+                            <div className="p-3 bg-white/10 rounded-2xl"><Smartphone className="h-6 w-6" /></div>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* Mode Selector */}
             <div className="flex gap-2">
@@ -685,13 +790,24 @@ function NFCPayPage() {
                     {/* Success */}
                     {nfcStatus === "success" && (
                         <>
-                            <div className="mx-auto w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mb-4">
-                                <CheckCircle2 className="h-14 w-14 text-green-600" />
+                            <div className={`mx-auto w-24 h-24 rounded-full flex items-center justify-center mb-4 ${!online ? "bg-amber-100" : "bg-green-100"}`}>
+                                {!online ? (
+                                    <CloudOff className="h-14 w-14 text-amber-600" />
+                                ) : (
+                                    <CheckCircle2 className="h-14 w-14 text-green-600" />
+                                )}
                             </div>
-                            <h3 className="text-lg font-semibold text-green-700 mb-1">Payment Successful!</h3>
-                            <p className="text-sm text-green-600 mb-1">
-                                {formatCurrency(selectedDevice?.amount || 0)} sent to {selectedDevice?.name}
+                            <h3 className={`text-lg font-semibold mb-1 ${!online ? "text-amber-700" : "text-green-700"}`}>
+                                {!online ? "Payment Queued!" : "Payment Successful!"}
+                            </h3>
+                            <p className={`text-sm mb-1 ${!online ? "text-amber-600" : "text-green-600"}`}>
+                                {formatCurrency(selectedDevice?.amount || 0)} {!online ? "queued for" : "sent to"} {selectedDevice?.name}
                             </p>
+                            {!online && (
+                                <p className="text-xs text-amber-500 mb-2">
+                                    Will auto-settle when you&apos;re back online
+                                </p>
+                            )}
                             {lastTxId && (
                                 <div className="my-3 bg-white rounded-lg border p-3 text-left space-y-1">
                                     <div className="flex justify-between text-xs">
@@ -704,11 +820,15 @@ function NFCPayPage() {
                                     </div>
                                     <div className="flex justify-between text-xs">
                                         <span className="text-muted-foreground">Status:</span>
-                                        <Badge className="bg-green-100 text-green-700 text-[10px]">Settled</Badge>
+                                        {!online ? (
+                                            <Badge className="bg-amber-100 text-amber-700 text-[10px]">Queued (Offline)</Badge>
+                                        ) : (
+                                            <Badge className="bg-green-100 text-green-700 text-[10px]">Settled</Badge>
+                                        )}
                                     </div>
                                     <div className="flex justify-between text-xs">
                                         <span className="text-muted-foreground">Mode:</span>
-                                        <span>NFC</span>
+                                        <span>{!online ? "NFC (Offline)" : "NFC"}</span>
                                     </div>
                                 </div>
                             )}
@@ -745,6 +865,15 @@ function NFCPayPage() {
                         <p><strong>C2G</strong> — Select Govt mode → Scan → Pick entity → Pay</p>
                         <p><strong>B2C</strong> — Merchant refunds you from their terminal</p>
                         <p><strong>B2G</strong> — Merchant pays govt from their terminal</p>
+                        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                            <p className="text-amber-800 font-medium flex items-center gap-1">
+                                <WifiOff className="h-3 w-3" /> SaralPay Offline Wallet
+                            </p>
+                            <p className="text-amber-700 mt-1">
+                                Load your SaralPay wallet before going offline. Payments deduct from your SaralPay balance
+                                and auto-sync when reconnected. Works via BroadcastChannel (same-device tabs).
+                            </p>
+                        </div>
                         <p className="mt-2 text-primary font-medium">All transactions logged with proper tx_type in wallet & API.</p>
                     </div>
                 </CardContent>

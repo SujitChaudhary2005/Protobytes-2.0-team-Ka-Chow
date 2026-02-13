@@ -71,7 +71,7 @@ export default function CitizenPage() {
 
 function CitizenHome() {
     const router = useRouter();
-    const { wallet, balance, nid, linkedBank, offlineLimit, transactions: walletTransactions, user } = useWallet();
+    const { wallet, balance, nid, linkedBank, offlineWallet, saralPayBalance, transactions: walletTransactions, user } = useWallet();
     useAutoSync();
     const [upaAddress, setUpaAddress] = useState("");
     const [mounted, setMounted] = useState(false);
@@ -138,7 +138,6 @@ function CitizenHome() {
         })
         .reduce((sum, t) => sum + t.amount, 0);
     const recentTx = transactions.slice(0, 8);
-    const offlinePct = offlineLimit.maxAmount > 0 ? Math.round((offlineLimit.currentUsed / offlineLimit.maxAmount) * 100) : 0;
 
     // ─── Spending stats ─────────────────────────────────────────────────
     const settledCount = transactions.filter((t) => t.status === "settled").length;
@@ -372,30 +371,32 @@ function CitizenHome() {
                 </CardContent>
             </Card>
 
-            {/* Offline Spending Limit Bar */}
-            <Card>
+            {/* SaralPay Offline Wallet Card */}
+            <Card className={`${offlineWallet.loaded ? "border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50" : "border-dashed"}`}>
                 <CardContent className="p-3">
                     <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                            <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />
-                            <p className="text-xs font-medium text-muted-foreground">Offline Limit</p>
+                            <WifiOff className={`h-3.5 w-3.5 ${offlineWallet.loaded ? "text-amber-600" : "text-muted-foreground"}`} />
+                            <p className={`text-xs font-medium ${offlineWallet.loaded ? "text-amber-800" : "text-muted-foreground"}`}>SaralPay Wallet</p>
+                            {offlineWallet.loaded && (
+                                <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">Active</span>
+                            )}
                         </div>
                         <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => router.push("/pay/settings")}>
                             <Settings className="h-3 w-3 mr-1" />
-                            Adjust
+                            {offlineWallet.loaded ? "Manage" : "Load"}
                         </Button>
                     </div>
-                    <div className="flex items-center gap-3">
-                        <div className="flex-1 bg-gray-100 rounded-full h-2.5">
-                            <div
-                                className={`h-2.5 rounded-full transition-all ${offlinePct > 80 ? "bg-red-500" : offlinePct > 50 ? "bg-amber-500" : "bg-green-500"}`}
-                                style={{ width: `${Math.min(offlinePct, 100)}%` }}
-                            />
+                    {offlineWallet.loaded ? (
+                        <div className="flex items-center gap-3">
+                            <p className="text-lg font-bold text-amber-700">{formatCurrency(saralPayBalance)}</p>
+                            <span className="text-[10px] text-amber-600">offline balance</span>
                         </div>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
-                            {formatCurrency(offlineLimit.currentUsed)} / {formatCurrency(offlineLimit.maxAmount)}
-                        </span>
-                    </div>
+                    ) : (
+                        <p className="text-xs text-muted-foreground">
+                            Load your SaralPay wallet for offline NFC payments
+                        </p>
+                    )}
                 </CardContent>
             </Card>
 

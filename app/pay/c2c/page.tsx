@@ -52,7 +52,7 @@ export default function C2CPaymentPage() {
 function C2CPayment() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { balance, updateBalance, addTransaction, creditUser, user, nid, wallet, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit } = useWallet();
+    const { balance, updateBalance, addTransaction, creditUser, user, nid, wallet, canSpendOffline, spendFromSaralPay, offlineWallet, saralPayBalance } = useWallet();
     const { online } = useNetwork();
     const [toUPA, setToUPA] = useState("");
     const [scannedName, setScannedName] = useState("");
@@ -171,10 +171,14 @@ function C2CPayment() {
                     toast.error(data.error || "Transfer failed");
                 }
             } else {
-                // ── OFFLINE: enforce limit, sign with Ed25519, queue ──
+                // ── OFFLINE: enforce SaralPay wallet balance ──
+                if (!offlineWallet.loaded) {
+                    toast.error("SaralPay wallet not loaded! Go to Settings to load funds.");
+                    setPaying(false);
+                    return;
+                }
                 if (!canSpendOffline(amt)) {
-                    const remaining = offlineLimit.maxAmount - offlineLimit.currentUsed;
-                    toast.error(`Offline limit exceeded. Remaining: NPR ${remaining.toLocaleString()}`);
+                    toast.error(`Insufficient SaralPay balance. Remaining: NPR ${saralPayBalance.toLocaleString()}`);
                     setPaying(false);
                     return;
                 }
@@ -218,7 +222,7 @@ function C2CPayment() {
 
                 const queuedTxId = `queued_${Date.now()}`;
                 updateBalance(amt);
-                consumeOfflineLimit(amt);
+                spendFromSaralPay(amt);
                 const offlineTx: any = {
                     id: queuedTxId,
                     tx_id: queuedTxId,

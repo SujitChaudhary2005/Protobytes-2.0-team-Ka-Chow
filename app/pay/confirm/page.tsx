@@ -18,7 +18,7 @@ import { Shield, Wifi, WifiOff, Loader2, AlertTriangle } from "lucide-react";
 function ConfirmContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { wallet, addTransaction, updateBalance, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit } = useWallet();
+    const { wallet, addTransaction, updateBalance, canSpendOffline, spendFromSaralPay, offlineWallet, saralPayBalance } = useWallet();
     const { online } = useNetwork();
 
     const [staticPayload, setStaticPayload] = useState<StaticQRPayload | null>(null);
@@ -209,10 +209,14 @@ function ConfirmContent() {
                     `/pay/success?txId=${txId}&amount=${parsedAmount}&intent=${encodeURIComponent(intentLabel)}&recipient=${encodeURIComponent(staticPayload.upa)}`
                 );
             } else {
-                // Enforce offline spending limit
+                // Enforce SaralPay wallet balance
+                if (!offlineWallet.loaded) {
+                    setError("SaralPay wallet not loaded! Go to Settings → SaralPay to load funds for offline payments.");
+                    setProcessing(false);
+                    return;
+                }
                 if (!canSpendOffline(parsedAmount)) {
-                    const remaining = offlineLimit.maxAmount - offlineLimit.currentUsed;
-                    setError(`Offline limit exceeded. Remaining: NPR ${remaining.toLocaleString()} of NPR ${offlineLimit.maxAmount.toLocaleString()}`);
+                    setError(`Insufficient SaralPay balance. Remaining: NPR ${saralPayBalance.toLocaleString()}`);
                     setProcessing(false);
                     return;
                 }
@@ -231,7 +235,7 @@ function ConfirmContent() {
                 });
 
                 updateBalance(parsedAmount);
-                consumeOfflineLimit(parsedAmount);
+                spendFromSaralPay(parsedAmount);
                 addTransaction({
                     id: `queued_${Date.now()}`,
                     recipient: staticPayload.upa,
@@ -310,26 +314,30 @@ function ConfirmContent() {
                 {online ? "Online — will settle instantly" : "Offline — will queue for later"}
             </div>
 
-            {/* Offline Spending Limit Bar */}
+            {/* SaralPay Wallet Balance */}
             {!online && (
-                <div className="rounded-lg border px-3 py-2 space-y-1.5">
+                <div className={`rounded-lg border px-3 py-2 space-y-1.5 ${offlineWallet.loaded ? "border-amber-200 bg-amber-50/50" : "border-red-200 bg-red-50/50"}`}>
                     <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">Offline Limit</span>
+                        <span className="text-muted-foreground">SaralPay Wallet</span>
                         <span className="font-medium">
-                            NPR {offlineLimit.currentUsed.toLocaleString()} / {offlineLimit.maxAmount.toLocaleString()} used
+                            {offlineWallet.loaded ? `NPR ${saralPayBalance.toLocaleString()}` : "Not Loaded"}
                         </span>
                     </div>
-                    <div className="h-2 bg-muted rounded-full overflow-hidden">
-                        <div
-                            className={`h-full rounded-full transition-all ${
-                                offlineLimit.currentUsed / offlineLimit.maxAmount > 0.8 ? "bg-destructive" : "bg-primary"
-                            }`}
-                            style={{ width: `${Math.min((offlineLimit.currentUsed / offlineLimit.maxAmount) * 100, 100)}%` }}
-                        />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                        Remaining: NPR {(offlineLimit.maxAmount - offlineLimit.currentUsed).toLocaleString()}
-                    </p>
+                    {offlineWallet.loaded && offlineWallet.initialLoadAmount > 0 && (
+                        <>
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                <div
+                                    className={`h-full rounded-full transition-all ${
+                                        saralPayBalance / offlineWallet.initialLoadAmount < 0.2 ? "bg-destructive" : "bg-amber-500"
+                                    }`}
+                                    style={{ width: `${Math.min((saralPayBalance / offlineWallet.initialLoadAmount) * 100, 100)}%` }}
+                                />
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Balance: NPR {saralPayBalance.toLocaleString()} of {offlineWallet.initialLoadAmount.toLocaleString()} loaded
+                            </p>
+                        </>
+                    )}
                 </div>
             )}
             {/* Cryptographic Verification Panel (for signed offline QRs) */}

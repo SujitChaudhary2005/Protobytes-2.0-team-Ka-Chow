@@ -5,11 +5,13 @@ import { useNetwork } from "@/hooks/use-network";
 import { getQueuedTransactions, updateTransactionStatus } from "@/lib/db";
 import { updateTransactionStatus as updateLocalTxStatus, getTransactions as getLocalTransactions } from "@/lib/storage";
 import { toast } from "sonner";
+import type { OfflineWallet } from "@/types";
 
 /**
  * Auto-sync hook — triggers background sync when transitioning from offline → online.
  * Shows toasts with sync progress and results.
  * Also updates wallet context & localStorage to reflect settled status.
+ * Resets SaralPay wallet usage after successful sync.
  */
 export function useAutoSync() {
     const { online } = useNetwork();
@@ -38,6 +40,8 @@ export function useAutoSync() {
                 toast.success(`${detail.synced} payment${detail.synced > 1 ? "s" : ""} settled via background sync!`);
                 // Update local storage to reflect settled
                 updateLocalQueuedToSettled();
+                // Reset SaralPay wallet initial load tracking (keep remaining balance)
+                resetSaralPayAfterSync();
             }
             if (detail?.failed > 0) {
                 toast.error(`${detail.failed} payment${detail.failed > 1 ? "s" : ""} failed to sync`);
@@ -114,6 +118,11 @@ export function useAutoSync() {
 
             // Also update the upa_transactions key that the wallet context uses
             updateWalletContextTransactions(settled > 0);
+
+            // Reset SaralPay wallet tracking after sync (keep remaining balance)
+            if (settled > 0) {
+                resetSaralPayAfterSync();
+            }
 
             // Dispatch global event so admin dashboard / other pages refresh
             // (Supabase Realtime will also fire, but this covers localStorage-only mode)
@@ -207,5 +216,34 @@ function updateWalletContextTransactions(hasSettled: boolean) {
             // Dispatch event so the home page knows to refresh
             window.dispatchEvent(new CustomEvent("upa-transactions-updated"));
         }
+    } catch { /* ignore */ }
+}
+
+/**
+ * After sync, reset SaralPay wallet tracking.
+ * Keeps the remaining balance but resets the initialLoadAmount to match current balance,
+ * so the progress bar resets. If balance is zero, deactivates the wallet.
+ */
+function resetSaralPayAfterSync() {
+    try {
+        const uid = getActiveUserId();
+        const key = uid ? `upa_saral_pay:${uid}` : "upa_saral_pay";
+        const stored = localStorage.getItem(key);
+        if (!stored) return;
+        const wallet: OfflineWallet = JSON.parse(stored);
+        if (!wallet.loaded) return;
+
+        const updated: OfflineWallet = {
+            ...wallet,
+            // Reset initial load to current balance so progress bar resets
+            initialLoadAmount: wallet.balance,
+            lastReset: Date.now(),
+            // If balance is zero, deactivate the wallet
+            loaded: wallet.balance > 0,
+        };
+        localStorage.setItem(key, JSON.stringify(updated));
+
+        // Dispatch event so wallet context picks up the change
+        window.dispatchEvent(new CustomEvent("upa-saralpay-synced", { detail: updated }));
     } catch { /* ignore */ }
 }

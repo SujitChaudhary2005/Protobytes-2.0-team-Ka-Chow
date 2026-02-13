@@ -21,9 +21,10 @@ export interface NIDCard {
   nidNumber: string;           // "RAM-KTM-1990-4521"
   fullName: string;            // "Ram Bahadur Thapa"
   dateOfBirth: string;         // "1990-05-15"
+  gender: "M" | "F" | "O";    // Male / Female / Other
   issueDate: string;
   expiryDate: string;
-  photoUrl: string;            // Mock photo URL
+  photoUrl: string;            // Mock photo URL or NID number (resolved via getNIDImageUrl)
   district: string;            // "Kathmandu"
   isActive: boolean;
   linkedUPA: string | null;    // "ram@upa.np"
@@ -40,11 +41,13 @@ export interface BankAccount {
   linkedVia: "nid";
 }
 
-// === Offline Spending Limit ===
-export interface OfflineLimit {
-  maxAmount: number;           // e.g., 5000 NPR
-  currentUsed: number;         // Sum of queued offline payments
-  lastReset: number;           // timestamp
+// === SaralPay Offline Wallet ===
+export interface OfflineWallet {
+  loaded: boolean;             // whether SaralPay wallet is active
+  balance: number;             // current SaralPay wallet balance
+  initialLoadAmount: number;   // how much was loaded originally
+  loadedAt: number;            // timestamp of last load
+  lastReset: number;           // timestamp of last sync/reset
 }
 
 // === C2C (Citizen-to-Citizen) Transaction ===
@@ -282,9 +285,10 @@ export const MOCK_NID_DATABASE: NIDCard[] = [
     nidNumber: "RAM-KTM-1990-4521",
     fullName: "Ram Bahadur Thapa",
     dateOfBirth: "1990-05-15",
+    gender: "M",
     issueDate: "2020-01-01",
     expiryDate: "2030-01-01",
-    photoUrl: "RAM-KTM-1990-4521", // Just store NID number, will fetch from Supabase
+    photoUrl: "/mock-nid/RAM-KTM-1990-4521.jpg",
     district: "Kathmandu",
     isActive: true,
     linkedUPA: "ram@upa.np",
@@ -296,9 +300,10 @@ export const MOCK_NID_DATABASE: NIDCard[] = [
     nidNumber: "SITA-PKR-1995-7832",
     fullName: "Sita Sharma",
     dateOfBirth: "1995-08-22",
+    gender: "F",
     issueDate: "2021-03-15",
     expiryDate: "2031-03-15",
-    photoUrl: "SITA-PKR-1995-7832",
+    photoUrl: "/mock-nid/SITA-PKR-1995-7832.jpg",
     district: "Pokhara",
     isActive: true,
     linkedUPA: "sita@upa.np",
@@ -310,9 +315,10 @@ export const MOCK_NID_DATABASE: NIDCard[] = [
     nidNumber: "HARI-LTP-1988-3214",
     fullName: "Hari Prasad Gurung",
     dateOfBirth: "1988-12-10",
+    gender: "M",
     issueDate: "2019-06-20",
     expiryDate: "2029-06-20",
-    photoUrl: "HARI-LTP-1988-3214",
+    photoUrl: "/mock-nid/HARI-LTP-1988-3214.jpg",
     district: "Lalitpur",
     isActive: true,
     linkedUPA: "hari@upa.np",
@@ -324,20 +330,22 @@ export const MOCK_NID_DATABASE: NIDCard[] = [
     nidNumber: "ANITA-BRT-1998-5643",
     fullName: "Anita Gurung",
     dateOfBirth: "1998-03-12",
+    gender: "F",
     issueDate: "2022-06-15",
     expiryDate: "2032-06-15",
-    photoUrl: "ANITA-BRT-1998-5643",
+    photoUrl: "/mock-nid/ANITA-BRT-1998-5643.jpg",
     district: "Bharatpur",
     isActive: true,
     linkedUPA: "anita@upa.np",
     linkedBanks: [
-      { id: "bank_5", bankName: "Himalayan Bank", accountNumber: "****7845", accountType: "savings", isPrimary: true, linkedVia: "nid" },
+      { id: "bank_4", bankName: "Himalayan Bank", accountNumber: "****0011", accountType: "savings", isPrimary: true, linkedVia: "nid" },
     ],
   },
   {
     nidNumber: "123-456-789",
     fullName: "Tyler Durden",
     dateOfBirth: "1979-12-18",
+    gender: "M",
     issueDate: "2024-12-18",
     expiryDate: "2034-12-18",
     photoUrl: "/mock-nid/tyler.png",
@@ -345,7 +353,7 @@ export const MOCK_NID_DATABASE: NIDCard[] = [
     isActive: true,
     linkedUPA: "tyler@upa.np",
     linkedBanks: [
-      { id: "bank_4", bankName: "Himalayan Bank", accountNumber: "****2341", accountType: "savings", isPrimary: true, linkedVia: "nid" },
+      { id: "bank_5", bankName: "Himalayan Bank", accountNumber: "****6655", accountType: "savings", isPrimary: true, linkedVia: "nid" },
     ],
   },
 ];

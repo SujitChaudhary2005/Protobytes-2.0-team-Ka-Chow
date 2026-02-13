@@ -103,14 +103,21 @@ self.addEventListener("fetch", function (event) {
 
                 // For page navigations, try cached pages then offline fallback
                 if (request.mode === "navigate") {
-                    return caches.match("/pay").then(function (payCached) {
-                        if (payCached) return payCached;
-                        return caches.match("/").then(function (rootCached) {
-                            if (rootCached) return rootCached;
-                            return caches.match("/auth").then(function (authCached) {
-                                if (authCached) return authCached;
-                                // Last resort: show offline fallback page
-                                return caches.match("/offline.html");
+                    // Try NFC pages first (most likely to be needed offline)
+                    return caches.match("/pay/nfc").then(function (nfcCached) {
+                        if (nfcCached && request.url.includes("/pay/nfc")) return nfcCached;
+                        return caches.match("/merchant/nfc").then(function (merchantNfcCached) {
+                            if (merchantNfcCached && request.url.includes("/merchant/nfc")) return merchantNfcCached;
+                            return caches.match("/pay").then(function (payCached) {
+                                if (payCached) return payCached;
+                                return caches.match("/").then(function (rootCached) {
+                                    if (rootCached) return rootCached;
+                                    return caches.match("/auth").then(function (authCached) {
+                                        if (authCached) return authCached;
+                                        // Last resort: show offline fallback page
+                                        return caches.match("/offline.html");
+                                    });
+                                });
                             });
                         });
                     });

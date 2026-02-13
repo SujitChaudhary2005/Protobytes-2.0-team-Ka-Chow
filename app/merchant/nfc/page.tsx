@@ -21,12 +21,17 @@ import {
     Landmark,
     Send,
     ArrowDownLeft,
+    WifiOff,
+    Wifi,
+    CloudOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import { useWallet } from "@/contexts/wallet-context";
+import { useNetwork } from "@/hooks/use-network";
 import { RouteGuard } from "@/components/route-guard";
 import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
+import { queueTransaction } from "@/lib/db";
 import { createSignalChannel } from "@/lib/nfc-signal";
 
 type TerminalStatus = "ready" | "detecting" | "processing" | "success";
@@ -58,7 +63,8 @@ export default function MerchantNFCWrapper() {
 
 function MerchantNFCTerminal() {
     const router = useRouter();
-    const { user, merchantProfile, addTransaction, updateBalance, balance, creditUser } = useWallet();
+    const { user, merchantProfile, addTransaction, updateBalance, balance, creditUser, offlineWallet, saralPayBalance, canSpendOffline, spendFromSaralPay } = useWallet();
+    const { online } = useNetwork();
     const channelRef = useRef<{ send: (msg: any) => void; close: () => void } | null>(null);
 
     const [hasNativeNFC, setHasNativeNFC] = useState(false);
@@ -196,6 +202,7 @@ function MerchantNFCTerminal() {
     const handlePaymentSuccess = (data: any) => {
         setStatus("success");
         const amount = data.amount;
+        const isOffline = !online || data.isOffline;
         const newTotal = dailyTotal + amount;
         const newCount = todaysTransactions + 1;
         setDailyTotal(newTotal);
@@ -217,9 +224,12 @@ function MerchantNFCTerminal() {
                 customerName: data.customerName || "Customer",
                 customerUPA: data.customerUPA || "",
                 businessId, paymentType: "nfc_business", mode: "nfc", direction: "incoming",
+                offlineQueued: isOffline ? "true" : "false",
             },
-            status: "settled" as const, mode: "nfc" as const,
-            nonce, timestamp: Date.now(), settledAt: Date.now(),
+            status: (isOffline ? "queued" : "settled") as "queued" | "settled",
+            mode: (isOffline ? "offline" : "nfc") as "offline" | "nfc",
+            nonce, timestamp: Date.now(),
+            settledAt: isOffline ? undefined : Date.now(),
             walletProvider: "upa_pay", payment_source: "wallet" as const,
         };
 
@@ -227,28 +237,55 @@ function MerchantNFCTerminal() {
         addTransaction(txRecord);
 
         // Log
-        setTxLog((prev) => [{ id: txId, type: "C2B (received)", amount, counterparty: data.customerName || "Customer", time: Date.now() }, ...prev]);
+        setTxLog((prev) => [{ id: txId, type: isOffline ? "C2B (offline)" : "C2B (received)", amount, counterparty: data.customerName || "Customer", time: Date.now() }, ...prev]);
         setLastTxId(txId);
-        setLastTxType("C2B");
+        setLastTxType(isOffline ? "C2B (Offline)" : "C2B");
 
-        // Persist via API (best-effort)
-        fetch("/api/transactions/settle", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                payload: {
+        // Persist via API — only when online (best-effort)
+        if (!isOffline) {
+            fetch("/api/transactions/settle", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    payload: {
+                        version: "1.0", upa: businessUPA,
+                        intent: { id: "nfc_purchase", category: "purchase", label: "NFC Payment Received" },
+                        tx_type: "merchant_purchase", amount, currency: "NPR",
+                        metadata: txRecord.metadata,
+                        payer_name: data.customerName || "Customer", payer_id: data.customerUPA || "unknown",
+                        issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
+                        nonce, type: "online",
+                    },
+                }),
+            }).catch(() => { /* best-effort */ });
+        } else {
+            // Queue for background sync
+            queueTransaction({
+                payload: JSON.stringify({
                     version: "1.0", upa: businessUPA,
                     intent: { id: "nfc_purchase", category: "purchase", label: "NFC Payment Received" },
                     tx_type: "merchant_purchase", amount, currency: "NPR",
                     metadata: txRecord.metadata,
                     payer_name: data.customerName || "Customer", payer_id: data.customerUPA || "unknown",
                     issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
-                    nonce, type: "online",
-                },
-            }),
-        }).catch(() => { /* best-effort */ });
+                    nonce, type: "offline",
+                }),
+                signature: "offline-nfc-merchant-" + txId,
+                publicKey: "",
+                timestamp: Date.now(),
+                nonce,
+                recipient: businessUPA,
+                amount,
+                intent: "NFC Payment Received",
+                metadata: txRecord.metadata,
+            }).catch(() => { /* best-effort */ });
+        }
 
         if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 100]);
-        toast.success(`Received ${formatCurrency(amount)} from ${data.customerName || "Customer"} [C2B]`);
+        if (isOffline) {
+            toast.success(`Received ${formatCurrency(amount)} from ${data.customerName || "Customer"} [C2B Offline] — will sync later`);
+        } else {
+            toast.success(`Received ${formatCurrency(amount)} from ${data.customerName || "Customer"} [C2B]`);
+        }
 
         setTimeout(() => { setStatus("ready"); }, 3000);
     };
@@ -258,6 +295,20 @@ function MerchantNFCTerminal() {
         const amount = Number(paymentAmount);
         if (!amount || amount <= 0) { toast.error("Enter a valid amount"); return; }
         if (amount > balance) { toast.error("Insufficient business balance"); return; }
+
+        const isOffline = !online;
+
+        // Offline guard: check SaralPay wallet
+        if (isOffline) {
+            if (!offlineWallet.loaded) {
+                toast.error("SaralPay wallet not loaded! Load funds for offline payments.");
+                return;
+            }
+            if (!canSpendOffline(amount)) {
+                toast.error(`Insufficient SaralPay balance! Remaining: ${formatCurrency(saralPayBalance)}`);
+                return;
+            }
+        }
 
         setStatus("processing");
         await new Promise((r) => setTimeout(r, 1000));
@@ -275,9 +326,12 @@ function MerchantNFCTerminal() {
                 businessName, businessUPA,
                 customerName: customer.name, customerUPA: customer.upa || "",
                 paymentType: "b2c", mode: "nfc", direction: "outgoing",
+                offlineQueued: isOffline ? "true" : "false",
             },
-            status: "settled" as const, mode: "nfc" as const,
-            nonce, timestamp: Date.now(), settledAt: Date.now(),
+            status: (isOffline ? "queued" : "settled") as "queued" | "settled",
+            mode: (isOffline ? "offline" : "nfc") as "offline" | "nfc",
+            nonce, timestamp: Date.now(),
+            settledAt: isOffline ? undefined : Date.now(),
             walletProvider: "upa_pay", payment_source: "wallet" as const,
         };
 
@@ -285,40 +339,69 @@ function MerchantNFCTerminal() {
         updateBalance(amount);
         addTransaction(txRecord);
 
-        // Notify citizen via signal channel (same-device + cross-device)
+        // Deduct from SaralPay wallet if offline
+        if (isOffline) spendFromSaralPay(amount);
+
+        // Notify citizen via signal channel (BroadcastChannel works offline for same-device!)
         channelRef.current?.send({
             type: "b2c_payment_received",
             businessId, businessName, businessUPA,
             targetCitizen: customer.id, targetUPA: customer.upa,
-            amount, txId,
+            amount, txId, isOffline,
         });
 
         // Credit receiver
         if (customer.upa) creditUser(customer.upa, amount, txRecord);
 
         // Log
-        setTxLog((prev) => [{ id: txId, type: "B2C (sent)", amount, counterparty: customer.name, time: Date.now() }, ...prev]);
+        setTxLog((prev) => [{ id: txId, type: isOffline ? "B2C (offline)" : "B2C (sent)", amount, counterparty: customer.name, time: Date.now() }, ...prev]);
         setLastTxId(txId);
-        setLastTxType("B2C");
+        setLastTxType(isOffline ? "B2C (Offline)" : "B2C");
 
-        // API
-        fetch("/api/transactions/settle", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                payload: {
+        // API — only when online
+        if (!isOffline) {
+            fetch("/api/transactions/settle", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    payload: {
+                        version: "1.0", upa: customer.upa || customer.name,
+                        intent: { id: "b2c_payment", category: "transfer", label: `B2C Payment to ${customer.name}` },
+                        tx_type: "b2c", amount, currency: "NPR", metadata: txRecord.metadata,
+                        payer_name: businessName, payer_id: businessUPA,
+                        issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
+                        nonce, type: "online",
+                    },
+                }),
+            }).catch(() => { /* best-effort */ });
+        } else {
+            // Queue for background sync
+            queueTransaction({
+                payload: JSON.stringify({
                     version: "1.0", upa: customer.upa || customer.name,
                     intent: { id: "b2c_payment", category: "transfer", label: `B2C Payment to ${customer.name}` },
                     tx_type: "b2c", amount, currency: "NPR", metadata: txRecord.metadata,
                     payer_name: businessName, payer_id: businessUPA,
                     issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
-                    nonce, type: "online",
-                },
-            }),
-        }).catch(() => { /* best-effort */ });
+                    nonce, type: "offline",
+                }),
+                signature: "offline-b2c-" + txId,
+                publicKey: "",
+                timestamp: Date.now(),
+                nonce,
+                recipient: customer.upa || customer.name,
+                amount,
+                intent: `B2C Payment to ${customer.name}`,
+                metadata: txRecord.metadata,
+            }).catch(() => { /* best-effort */ });
+        }
 
         setStatus("success");
         if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 100]);
-        toast.success(`Sent ${formatCurrency(amount)} to ${customer.name} [B2C]`);
+        if (isOffline) {
+            toast.success(`Sent ${formatCurrency(amount)} to ${customer.name} [B2C Offline] — will sync later`);
+        } else {
+            toast.success(`Sent ${formatCurrency(amount)} to ${customer.name} [B2C]`);
+        }
 
         setTimeout(() => setStatus("ready"), 3000);
     };
@@ -328,6 +411,20 @@ function MerchantNFCTerminal() {
         const amount = Number(paymentAmount);
         if (!amount || amount <= 0) { toast.error("Enter a valid amount"); return; }
         if (amount > balance) { toast.error("Insufficient business balance"); return; }
+
+        const isOffline = !online;
+
+        // Offline guard: check SaralPay wallet
+        if (isOffline) {
+            if (!offlineWallet.loaded) {
+                toast.error("SaralPay wallet not loaded! Load funds for offline payments.");
+                return;
+            }
+            if (!canSpendOffline(amount)) {
+                toast.error(`Insufficient SaralPay balance! Remaining: ${formatCurrency(saralPayBalance)}`);
+                return;
+            }
+        }
 
         setStatus("processing");
         await new Promise((r) => setTimeout(r, 1000));
@@ -345,9 +442,12 @@ function MerchantNFCTerminal() {
                 businessName, businessUPA,
                 govEntity: gov.name, govUPA: gov.upa,
                 paymentType: "b2g", mode: "nfc", direction: "outgoing",
+                offlineQueued: isOffline ? "true" : "false",
             },
-            status: "settled" as const, mode: "nfc" as const,
-            nonce, timestamp: Date.now(), settledAt: Date.now(),
+            status: (isOffline ? "queued" : "settled") as "queued" | "settled",
+            mode: (isOffline ? "offline" : "nfc") as "offline" | "nfc",
+            nonce, timestamp: Date.now(),
+            settledAt: isOffline ? undefined : Date.now(),
             walletProvider: "upa_pay", payment_source: "wallet" as const,
         };
 
@@ -355,29 +455,58 @@ function MerchantNFCTerminal() {
         updateBalance(amount);
         addTransaction(txRecord);
 
-        // Log
-        setTxLog((prev) => [{ id: txId, type: "B2G (sent)", amount, counterparty: gov.name, time: Date.now() }, ...prev]);
-        setLastTxId(txId);
-        setLastTxType("B2G");
+        // Deduct from SaralPay wallet if offline
+        if (isOffline) spendFromSaralPay(amount);
 
-        // API
-        fetch("/api/transactions/settle", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                payload: {
+        // Log
+        setTxLog((prev) => [{ id: txId, type: isOffline ? "B2G (offline)" : "B2G (sent)", amount, counterparty: gov.name, time: Date.now() }, ...prev]);
+        setLastTxId(txId);
+        setLastTxType(isOffline ? "B2G (Offline)" : "B2G");
+
+        // API — only when online
+        if (!isOffline) {
+            fetch("/api/transactions/settle", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    payload: {
+                        version: "1.0", upa: gov.upa,
+                        intent: { id: `b2g_${gov.category}`, category: gov.category, label: `B2G Payment — ${gov.name}` },
+                        tx_type: "b2g", amount, currency: "NPR", metadata: txRecord.metadata,
+                        payer_name: businessName, payer_id: businessUPA,
+                        issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
+                        nonce, type: "online",
+                    },
+                }),
+            }).catch(() => { /* best-effort */ });
+        } else {
+            // Queue for background sync
+            queueTransaction({
+                payload: JSON.stringify({
                     version: "1.0", upa: gov.upa,
                     intent: { id: `b2g_${gov.category}`, category: gov.category, label: `B2G Payment — ${gov.name}` },
                     tx_type: "b2g", amount, currency: "NPR", metadata: txRecord.metadata,
                     payer_name: businessName, payer_id: businessUPA,
                     issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
-                    nonce, type: "online",
-                },
-            }),
-        }).catch(() => { /* best-effort */ });
+                    nonce, type: "offline",
+                }),
+                signature: "offline-b2g-" + txId,
+                publicKey: "",
+                timestamp: Date.now(),
+                nonce,
+                recipient: gov.upa,
+                amount,
+                intent: `B2G Payment — ${gov.name}`,
+                metadata: txRecord.metadata,
+            }).catch(() => { /* best-effort */ });
+        }
 
         setStatus("success");
         if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 100]);
-        toast.success(`Paid ${formatCurrency(amount)} to ${gov.name} [B2G]`);
+        if (isOffline) {
+            toast.success(`Paid ${formatCurrency(amount)} to ${gov.name} [B2G Offline] — will sync later`);
+        } else {
+            toast.success(`Paid ${formatCurrency(amount)} to ${gov.name} [B2G]`);
+        }
 
         setTimeout(() => setStatus("ready"), 3000);
     };
@@ -416,15 +545,55 @@ function MerchantNFCTerminal() {
                 </Button>
                 <div className="flex-1">
                     <h1 className="text-lg font-bold">Merchant NFC Terminal</h1>
-                    <p className="text-xs text-muted-foreground">Accept & send contactless payments (cross-device)</p>
+                    <p className="text-xs text-muted-foreground">
+                        Accept & send contactless payments
+                        {!online && " • Offline Mode"}
+                    </p>
                 </div>
-                <Badge variant={hasNativeNFC ? "default" : "secondary"} className="text-[10px]">
-                    {hasNativeNFC ? "NFC" : "BC"}
-                </Badge>
+                <div className="flex items-center gap-1.5">
+                    <Badge variant={online ? "default" : "outline"} className={`text-[10px] ${!online ? "border-amber-400 text-amber-700 bg-amber-50" : ""}`}>
+                        {online ? <Wifi className="h-3 w-3 mr-1" /> : <WifiOff className="h-3 w-3 mr-1" />}
+                        {online ? "Online" : "Offline"}
+                    </Badge>
+                    <Badge variant={hasNativeNFC ? "default" : "secondary"} className="text-[10px]">
+                        {hasNativeNFC ? "NFC" : "BC"}
+                    </Badge>
+                </div>
             </div>
 
+            {/* Offline Banner — SaralPay Wallet */}
+            {!online && (
+                <Card className={`${offlineWallet.loaded ? "border-amber-300 bg-amber-50" : "border-red-300 bg-red-50"}`}>
+                    <CardContent className="p-3 flex items-start gap-3">
+                        <WifiOff className={`h-5 w-5 mt-0.5 shrink-0 ${offlineWallet.loaded ? "text-amber-600" : "text-red-600"}`} />
+                        <div className="flex-1">
+                            <p className={`text-sm font-medium ${offlineWallet.loaded ? "text-amber-800" : "text-red-800"}`}>
+                                {offlineWallet.loaded ? "SaralPay Offline Wallet" : "SaralPay Not Loaded"}
+                            </p>
+                            {offlineWallet.loaded ? (
+                                <>
+                                    <p className="text-xs text-amber-700 mt-1">
+                                        Offline payments deduct from your SaralPay wallet and queue for sync.
+                                    </p>
+                                    <div className="flex items-center gap-3 mt-2">
+                                        <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 font-bold">
+                                            <CloudOff className="h-3 w-3 mr-1" />
+                                            SaralPay Balance: {formatCurrency(saralPayBalance)}
+                                        </Badge>
+                                    </div>
+                                </>
+                            ) : (
+                                <p className="text-xs text-red-700 mt-1">
+                                    Load your SaralPay wallet before going offline. Go to Settings → SaralPay to load funds.
+                                </p>
+                            )}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
             {/* NFC Banner */}
-            {hasNativeNFC && (
+            {hasNativeNFC && online && (
                 <Card className="border-green-200 bg-green-50">
                     <CardContent className="p-3 flex items-start gap-3">
                         <Smartphone className="h-5 w-5 text-green-600 mt-0.5 shrink-0" />
@@ -436,19 +605,34 @@ function MerchantNFCTerminal() {
                 </Card>
             )}
 
-            {/* Business balance */}
-            <Card className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white border-0">
-                <CardContent className="p-4">
-                    <div className="flex justify-between items-center">
-                        <div>
-                            <p className="text-xs text-white/70">Business Balance</p>
-                            <p className="text-2xl font-bold">{formatCurrency(balance)}</p>
-                            <p className="text-[10px] text-white/50 mt-1">{businessUPA}</p>
+            {/* Business balance — shows SaralPay when offline */}
+            {!online && offlineWallet.loaded ? (
+                <Card className="bg-gradient-to-r from-amber-500 to-orange-600 text-white border-0">
+                    <CardContent className="p-4">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <p className="text-xs text-white/70">SaralPay Offline Wallet</p>
+                                <p className="text-2xl font-bold">{formatCurrency(saralPayBalance)}</p>
+                                <p className="text-[10px] text-white/50 mt-1">{businessUPA}</p>
+                            </div>
+                            <div className="p-3 bg-white/10 rounded-2xl"><WifiOff className="h-6 w-6" /></div>
                         </div>
-                        <div className="p-3 bg-white/10 rounded-2xl"><Building2 className="h-6 w-6" /></div>
-                    </div>
-                </CardContent>
-            </Card>
+                    </CardContent>
+                </Card>
+            ) : (
+                <Card className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white border-0">
+                    <CardContent className="p-4">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <p className="text-xs text-white/70">Business Balance</p>
+                                <p className="text-2xl font-bold">{formatCurrency(balance)}</p>
+                                <p className="text-[10px] text-white/50 mt-1">{businessUPA}</p>
+                            </div>
+                            <div className="p-3 bg-white/10 rounded-2xl"><Building2 className="h-6 w-6" /></div>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* Mode Selector */}
             <div className="flex gap-2">
@@ -655,11 +839,18 @@ function MerchantNFCTerminal() {
                     {/* Success (all modes) */}
                     {status === "success" && (
                         <>
-                            <div className="mx-auto w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-4">
-                                <CheckCircle2 className="h-10 w-10 text-green-600" />
+                            <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${!online ? "bg-amber-100" : "bg-green-100"}`}>
+                                {!online ? (
+                                    <CloudOff className="h-10 w-10 text-amber-600" />
+                                ) : (
+                                    <CheckCircle2 className="h-10 w-10 text-green-600" />
+                                )}
                             </div>
-                            <h3 className="text-lg font-semibold text-green-700 mb-1">
-                                {txMode === "charge" ? "Payment Received!" : txMode === "b2c" ? "Money Sent!" : "Tax/Fee Paid!"}
+                            <h3 className={`text-lg font-semibold mb-1 ${!online ? "text-amber-700" : "text-green-700"}`}>
+                                {!online
+                                    ? (txMode === "charge" ? "Payment Queued!" : txMode === "b2c" ? "Transfer Queued!" : "Payment Queued!")
+                                    : (txMode === "charge" ? "Payment Received!" : txMode === "b2c" ? "Money Sent!" : "Tax/Fee Paid!")
+                                }
                             </h3>
                             {lastTxId && (
                                 <div className="my-2 bg-white rounded-lg border p-2 text-left space-y-1 mx-auto max-w-xs">
@@ -671,9 +862,19 @@ function MerchantNFCTerminal() {
                                         <span className="text-muted-foreground">Type:</span>
                                         <Badge variant="outline" className="text-[10px]">{lastTxType}</Badge>
                                     </div>
+                                    <div className="flex justify-between text-xs">
+                                        <span className="text-muted-foreground">Status:</span>
+                                        {!online ? (
+                                            <Badge className="bg-amber-100 text-amber-700 text-[10px]">Queued (Offline)</Badge>
+                                        ) : (
+                                            <Badge className="bg-green-100 text-green-700 text-[10px]">Settled</Badge>
+                                        )}
+                                    </div>
                                 </div>
                             )}
-                            <p className="text-sm text-green-600">Transaction settled ✓</p>
+                            <p className={`text-sm ${!online ? "text-amber-600" : "text-green-600"}`}>
+                                {!online ? "Will auto-sync when back online ⏳" : "Transaction settled ✓"}
+                            </p>
                         </>
                     )}
                 </CardContent>
@@ -716,6 +917,15 @@ function MerchantNFCTerminal() {
                         <p><strong>Charge (C2B):</strong> Customer opens /pay/nfc on their phone → appears here → tap Charge</p>
                         <p><strong>B2C (Refund/Payout):</strong> Switch to B2C → select customer → Send</p>
                         <p><strong>B2G (Tax/Fee):</strong> Switch to B2G → select govt entity → Pay</p>
+                        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                            <p className="text-amber-800 font-medium flex items-center gap-1">
+                                <WifiOff className="h-3 w-3" /> SaralPay Offline Wallet
+                            </p>
+                            <p className="text-amber-700 mt-1">
+                                Load your SaralPay wallet for offline payments. Transactions queue locally
+                                and auto-sync when connectivity is restored. Payments deduct from SaralPay balance.
+                            </p>
+                        </div>
                         <p className="mt-2 text-primary font-medium">Works across devices via Supabase Realtime — true mobile-to-mobile!</p>
                     </div>
                 </CardContent>
