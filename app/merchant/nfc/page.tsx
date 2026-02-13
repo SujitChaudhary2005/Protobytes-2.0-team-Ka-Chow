@@ -33,9 +33,10 @@ import { RouteGuard } from "@/components/route-guard";
 import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { queueTransaction } from "@/lib/db";
 import { createSignalChannel } from "@/lib/nfc-signal";
+import { MerchantOfflineCharge } from "@/components/cross-device-offline";
 
 type TerminalStatus = "ready" | "detecting" | "processing" | "success";
-type BizTxMode = "charge" | "b2c" | "b2g";
+type BizTxMode = "charge" | "b2c" | "b2g" | "xdevice";
 
 interface CustomerDevice {
     id: string;
@@ -534,7 +535,7 @@ function MerchantNFCTerminal() {
         }
     };
 
-    const modeLabels: Record<BizTxMode, string> = { charge: "Charge Customer (C2B)", b2c: "Send to Customer (B2C)", b2g: "Pay Government (B2G)" };
+    const modeLabels: Record<BizTxMode, string> = { charge: "Charge Customer (C2B)", b2c: "Send to Customer (B2C)", b2g: "Pay Government (B2G)", xdevice: "Cross-Device Offline" };
 
     return (
         <div className="p-4 md:p-6 space-y-4 pb-24">
@@ -651,8 +652,19 @@ function MerchantNFCTerminal() {
                     <Landmark className="h-4 w-4 mr-1" />
                     <span className="text-xs">B2G</span>
                 </Button>
+                <Button variant={txMode === "xdevice" ? "default" : "outline"} size="sm"
+                    onClick={() => setTxMode("xdevice")}
+                    className={`flex-1 ${txMode === "xdevice" ? "bg-purple-600 hover:bg-purple-700" : ""}`}>
+                    <Smartphone className="h-4 w-4 mr-1" />
+                    <span className="text-xs">X-Device</span>
+                </Button>
             </div>
 
+            {/* Cross-Device Offline Mode */}
+            {txMode === "xdevice" ? (
+                <MerchantOfflineCharge businessName={businessName || merchantProfile?.businessName || "My Business"} businessUPA={businessUPA} />
+            ) : (
+            <>
             {/* Business Setup */}
             <Card>
                 <CardHeader className="pb-3">
@@ -907,6 +919,9 @@ function MerchantNFCTerminal() {
                 </Card>
             )}
 
+            </>
+            )}
+
             {/* Instructions */}
             <Card className="border-dashed">
                 <CardContent className="p-4">
@@ -917,6 +932,7 @@ function MerchantNFCTerminal() {
                         <p><strong>Charge (C2B):</strong> Customer opens /pay/nfc on their phone → appears here → tap Charge</p>
                         <p><strong>B2C (Refund/Payout):</strong> Switch to B2C → select customer → Send</p>
                         <p><strong>B2G (Tax/Fee):</strong> Switch to B2G → select govt entity → Pay</p>
+                        <p><strong>X-Device (Offline):</strong> Two-phone Ed25519 QR handshake — zero internet needed!</p>
                         <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
                             <p className="text-amber-800 font-medium flex items-center gap-1">
                                 <WifiOff className="h-3 w-3" /> SaralPay Offline Wallet

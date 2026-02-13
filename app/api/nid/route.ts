@@ -29,8 +29,6 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (!error && nidRow) {
-        // Simulate realistic DB lookup delay
-        await new Promise((r) => setTimeout(r, 600));
 
         const photoUrl = getNIDImageUrl(nidRow.nid_number) || nidRow.photo_url;
 
@@ -80,9 +78,6 @@ export async function POST(request: NextRequest) {
         { status: 403 }
       );
     }
-
-    // Simulate verification delay
-    await new Promise((r) => setTimeout(r, 800));
 
     const photoUrl = getNIDImageUrl(nid.nidNumber) || nid.photoUrl;
 

@@ -31,6 +31,7 @@ import { RouteGuard } from "@/components/route-guard";
 import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { queueTransaction } from "@/lib/db";
 import { createSignalChannel } from "@/lib/nfc-signal";
+import { CitizenOfflinePay } from "@/components/cross-device-offline";
 
 type NFCStatus =
     | "checking"
@@ -42,7 +43,7 @@ type NFCStatus =
     | "success"
     | "error";
 
-type TxMode = "c2b" | "c2c" | "c2g";
+type TxMode = "c2b" | "c2c" | "c2g" | "xdevice";
 
 interface DetectedDevice {
     id: string;
@@ -495,7 +496,7 @@ function NFCPayPage() {
     const citizens = nearbyDevices.filter((d) => d.type === "citizen");
     const govEntities = nearbyDevices.filter((d) => d.type === "government");
 
-    const modeLabel: Record<TxMode, string> = { c2b: "Pay Merchant", c2c: "Send to Person", c2g: "Pay Government" };
+    const modeLabel: Record<TxMode, string> = { c2b: "Pay Merchant", c2c: "Send to Person", c2g: "Pay Government", xdevice: "Cross-Device Offline" };
 
     const txTypeLabel = (t: string) => {
         switch (t) {
@@ -608,8 +609,22 @@ function NFCPayPage() {
                         <span className="text-xs">{mode === "c2b" ? "Merchant" : mode === "c2c" ? "Person" : "Govt"}</span>
                     </Button>
                 ))}
+                <Button
+                    variant={txMode === "xdevice" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => { setTxMode("xdevice"); resetState(); }}
+                    className={`flex-1 ${txMode === "xdevice" ? "bg-indigo-600 hover:bg-indigo-700" : ""}`}
+                >
+                    <Smartphone className="h-4 w-4 mr-1" />
+                    <span className="text-xs">X-Device</span>
+                </Button>
             </div>
 
+            {/* Cross-Device Offline Mode */}
+            {txMode === "xdevice" ? (
+                <CitizenOfflinePay />
+            ) : (
+            <>
             {/* Amount input */}
             {!["confirming", "processing", "success"].includes(nfcStatus) && (
                 <Card>
@@ -853,6 +868,9 @@ function NFCPayPage() {
                 </CardContent>
             </Card>
 
+            </>
+            )}
+
             {/* Instructions */}
             <Card className="border-dashed">
                 <CardContent className="p-4">
@@ -865,6 +883,7 @@ function NFCPayPage() {
                         <p><strong>C2G</strong> — Select Govt mode → Scan → Pick entity → Pay</p>
                         <p><strong>B2C</strong> — Merchant refunds you from their terminal</p>
                         <p><strong>B2G</strong> — Merchant pays govt from their terminal</p>
+                        <p><strong>X-Device</strong> — Two-phone Ed25519 QR handshake — fully offline, cross-device!</p>
                         <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
                             <p className="text-amber-800 font-medium flex items-center gap-1">
                                 <WifiOff className="h-3 w-3" /> SaralPay Offline Wallet

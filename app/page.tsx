@@ -151,8 +151,8 @@ function CitizenHome() {
     const [chartTimeRange, setChartTimeRange] = useState("90d");
 
     const spendingChartConfig: ChartConfig = {
-        spent: { label: "Spent", color: "var(--chart-1)" },
-        pending: { label: "Pending", color: "var(--chart-3)" },
+        spent: { label: "Spent", color: "hsl(var(--chart-1))" },
+        pending: { label: "Pending", color: "hsl(var(--chart-3))" },
     };
 
     const spendingChartData = useMemo(() => {
