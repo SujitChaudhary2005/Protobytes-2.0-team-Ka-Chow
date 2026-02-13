@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useMemo } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -9,6 +9,22 @@ import { getTransactions, Transaction } from "@/lib/storage";
 import { toast } from "sonner";
 import { RouteGuard } from "@/components/route-guard";
 import { useAutoSync } from "@/hooks/use-auto-sync";
+import { Area, AreaChart, Bar, BarChart as RechartsBarChart, CartesianGrid, Pie, PieChart as RechartsPieChart, XAxis, YAxis } from "recharts";
+import {
+    ChartContainer,
+    ChartLegend,
+    ChartLegendContent,
+    ChartTooltip,
+    ChartTooltipContent,
+    type ChartConfig,
+} from "@/components/ui/chart";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import {
     TrendingUp,
     DollarSign,
@@ -181,6 +197,40 @@ function AdminDashboard() {
 
     const reconciliationRate = stats.total > 0 ? Math.round((stats.settled / stats.total) * 100) : 100;
 
+    // ─── Chart: Revenue trend by day ───────────────────────────────────
+    const [chartTimeRange, setChartTimeRange] = useState("90d");
+
+    const chartConfig: ChartConfig = {
+        settled: { label: "Settled", color: "var(--chart-1)" },
+        pending: { label: "Pending", color: "var(--chart-3)" },
+    };
+
+    const chartData = useMemo(() => {
+        // Group transactions by date
+        const byDate: Record<string, { settled: number; pending: number }> = {};
+        transactions.forEach((tx) => {
+            const d = new Date(tx.timestamp);
+            const key = d.toISOString().split("T")[0]; // YYYY-MM-DD
+            if (!byDate[key]) byDate[key] = { settled: 0, pending: 0 };
+            if (tx.status === "settled") byDate[key].settled += tx.amount;
+            else byDate[key].pending += tx.amount;
+        });
+        return Object.entries(byDate)
+            .map(([date, v]) => ({ date, ...v }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+    }, [transactions]);
+
+    const filteredChartData = useMemo(() => {
+        if (chartData.length === 0) return [];
+        const refDate = new Date(chartData[chartData.length - 1].date);
+        let days = 90;
+        if (chartTimeRange === "30d") days = 30;
+        else if (chartTimeRange === "7d") days = 7;
+        const start = new Date(refDate);
+        start.setDate(start.getDate() - days);
+        return chartData.filter((item) => new Date(item.date) >= start);
+    }, [chartData, chartTimeRange]);
+
     // Group by tx_type
     const txTypeGroups = transactions.reduce((acc, tx) => {
         const type = (tx as any).tx_type || "payment";
@@ -218,6 +268,24 @@ function AdminDashboard() {
         const d = new Date(t.timestamp);
         return t.status === "settled" && d.getFullYear() === now.getFullYear();
     }).reduce((s, t) => s + t.amount, 0);
+
+    // ─── Revenue by Type Bar Chart ──────────────────────────────────────
+    const typeBarData = useMemo(() => {
+        const byType: Record<string, { settled: number; pending: number }> = {};
+        transactions.forEach(tx => {
+            const type = (tx as any).tx_type || "payment";
+            if (!byType[type]) byType[type] = { settled: 0, pending: 0 };
+            if (tx.status === "settled") byType[type].settled += tx.amount;
+            else byType[type].pending += tx.amount;
+        });
+        const labels: Record<string, string> = { payment: "QR Pay", c2c: "Transfer", merchant_purchase: "Merchant", bill_payment: "Bills", nid_payment: "NID/NFC" };
+        return Object.entries(byType).map(([type, v]) => ({ type: labels[type] || type, ...v }));
+    }, [transactions]);
+
+    const typeBarConfig: ChartConfig = {
+        settled: { label: "Settled", color: "hsl(142, 71%, 45%)" },
+        pending: { label: "Pending", color: "hsl(38, 92%, 50%)" },
+    };
 
     return (
         <div className="p-4 md:p-6 space-y-6">
@@ -403,6 +471,103 @@ function AdminDashboard() {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* ─── Revenue Trend Chart ─────────────────────────────── */}
+            <Card className="pt-0">
+                <CardHeader className="flex items-center gap-2 space-y-0 border-b py-5 sm:flex-row">
+                    <div className="grid flex-1 gap-1">
+                        <CardTitle>Revenue Trend</CardTitle>
+                        <CardDescription>Settled vs pending amounts over time</CardDescription>
+                    </div>
+                    <Select value={chartTimeRange} onValueChange={setChartTimeRange}>
+                        <SelectTrigger className="hidden w-[160px] rounded-lg sm:ml-auto sm:flex" aria-label="Select time range">
+                            <SelectValue placeholder="Last 3 months" />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-xl">
+                            <SelectItem value="90d" className="rounded-lg">Last 3 months</SelectItem>
+                            <SelectItem value="30d" className="rounded-lg">Last 30 days</SelectItem>
+                            <SelectItem value="7d" className="rounded-lg">Last 7 days</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </CardHeader>
+                <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+                    {filteredChartData.length > 0 ? (
+                        <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
+                            <AreaChart data={filteredChartData}>
+                                <defs>
+                                    <linearGradient id="fillSettled" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="var(--color-settled)" stopOpacity={0.8} />
+                                        <stop offset="95%" stopColor="var(--color-settled)" stopOpacity={0.1} />
+                                    </linearGradient>
+                                    <linearGradient id="fillPending" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="var(--color-pending)" stopOpacity={0.8} />
+                                        <stop offset="95%" stopColor="var(--color-pending)" stopOpacity={0.1} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid vertical={false} />
+                                <XAxis
+                                    dataKey="date"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tickMargin={8}
+                                    minTickGap={32}
+                                    tickFormatter={(value) => {
+                                        const date = new Date(value);
+                                        return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                                    }}
+                                />
+                                <ChartTooltip
+                                    cursor={false}
+                                    content={
+                                        <ChartTooltipContent
+                                            labelFormatter={(value) => new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                            indicator="dot"
+                                        />
+                                    }
+                                />
+                                <Area dataKey="pending" type="natural" fill="url(#fillPending)" stroke="var(--color-pending)" stackId="a" />
+                                <Area dataKey="settled" type="natural" fill="url(#fillSettled)" stroke="var(--color-settled)" stackId="a" />
+                                <ChartLegend content={<ChartLegendContent />} />
+                            </AreaChart>
+                        </ChartContainer>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
+                            <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
+                            <p className="text-sm">No transaction data for chart</p>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* ─── Revenue by Transaction Type (Bar Chart) ──────────── */}
+            <Card>
+                <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                        <BarChart3 className="h-4 w-4 text-primary" /> Revenue by Transaction Type
+                    </CardTitle>
+                    <CardDescription className="text-xs">Settled vs pending amounts per payment category</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    {typeBarData.length > 0 ? (
+                        <ChartContainer config={typeBarConfig} className="aspect-auto h-[280px] w-full">
+                            <RechartsBarChart data={typeBarData}>
+                                <CartesianGrid vertical={false} />
+                                <XAxis dataKey="type" tickLine={false} axisLine={false} tickMargin={8} fontSize={12} />
+                                <YAxis tickLine={false} axisLine={false} width={55} fontSize={11} tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} />
+                                <ChartTooltip content={<ChartTooltipContent />} />
+                                <Bar dataKey="settled" fill="var(--color-settled)" radius={[4, 4, 0, 0]} />
+                                <Bar dataKey="pending" fill="var(--color-pending)" radius={[4, 4, 0, 0]} />
+                                <ChartLegend content={<ChartLegendContent />} />
+                            </RechartsBarChart>
+                        </ChartContainer>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center h-[280px] text-muted-foreground">
+                            <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
+                            <p className="text-sm">No transaction data for chart</p>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
 
             {/* Transaction Type Breakdown + Ministry Allocation */}
             <div className="grid gap-4 md:grid-cols-2">
@@ -622,7 +787,7 @@ function AdminDashboard() {
                                                     <p className="font-medium text-sm">{tx.intent}</p>
                                                     {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
                                                         : tx.status === "pending" || tx.status === "queued" ? <Clock className="h-3.5 w-3.5 text-warning shrink-0" />
-                                                        : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
+                                                            : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
                                                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tx.status === "settled" ? "bg-success/10 text-success" : tx.status === "pending" || tx.status === "queued" ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger"}`}>{tx.status}</span>
                                                 </div>
                                                 <p className="text-xs text-muted-foreground truncate">{tx.recipientName || tx.recipient}</p>

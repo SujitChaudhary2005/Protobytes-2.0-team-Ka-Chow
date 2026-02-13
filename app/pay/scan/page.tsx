@@ -225,6 +225,17 @@ function ScanPage() {
                 setError("Invalid QR code — no UPA address found");
                 return;
             }
+
+            // ── User "receive" QR → redirect to C2C with pre-filled recipient ──
+            if (parsed.type === "receive") {
+                const params = new URLSearchParams();
+                params.set("to", parsed.upa);
+                if (parsed.name) params.set("name", parsed.name);
+                router.push(`/pay/c2c?${params.toString()}`);
+                return;
+            }
+
+            // ── Standard StaticQRPayload → confirm page ──
             router.push(`/pay/confirm?data=${encodeURIComponent(data)}`);
         } catch {
             const trimmed = data.trim();
@@ -643,6 +654,7 @@ function ScanPage() {
                                     Service: <span className="font-medium text-foreground">{matchedUpa.intents[0].label}</span>
                                 </p>
                             )}
+
 
                             <Button className="w-full" onClick={handlePayWithUpa} disabled={!selectedIntentCode}>
                                 Proceed to Pay
