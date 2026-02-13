@@ -1,15 +1,31 @@
 "use client";
 
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "@/contexts/wallet-context";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Transaction } from "@/types";
 import { RouteGuard } from "@/components/route-guard";
 import { useAutoSync } from "@/hooks/use-auto-sync";
+import { Area, AreaChart, Bar, BarChart as RechartsBarChart, CartesianGrid, Pie, PieChart as RechartsPieChart, XAxis, YAxis } from "recharts";
+import {
+    ChartContainer,
+    ChartLegend,
+    ChartLegendContent,
+    ChartTooltip,
+    ChartTooltipContent,
+    type ChartConfig,
+} from "@/components/ui/chart";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import {
     ScanLine,
     ArrowRight,
@@ -40,7 +56,6 @@ import {
     FileText,
     IdCard,
     Building2,
-    Wallet,
 } from "lucide-react";
 
 export default function CitizenPage() {
@@ -122,6 +137,89 @@ function CitizenHome() {
     const recentTx = transactions.slice(0, 8);
     const offlinePct = offlineLimit.maxAmount > 0 ? Math.round((offlineLimit.currentUsed / offlineLimit.maxAmount) * 100) : 0;
 
+    // ─── Spending stats ─────────────────────────────────────────────────
+    const settledCount = transactions.filter((t) => t.status === "settled").length;
+    const pendingCount = transactions.filter((t) => t.status === "pending" || t.status === "queued").length;
+    const todaySpent = transactions.filter((t) => {
+        const d = new Date(t.timestamp); const now = new Date();
+        return t.status === "settled" && d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).reduce((s, t) => s + t.amount, 0);
+
+    // ─── Spending trend chart ───────────────────────────────────────────
+    const [chartTimeRange, setChartTimeRange] = useState("90d");
+
+    const spendingChartConfig: ChartConfig = {
+        spent: { label: "Spent", color: "var(--chart-1)" },
+        pending: { label: "Pending", color: "var(--chart-3)" },
+    };
+
+    const spendingChartData = useMemo(() => {
+        const byDate: Record<string, { spent: number; pending: number }> = {};
+        transactions.forEach((tx) => {
+            const d = new Date(tx.timestamp);
+            const key = d.toISOString().split("T")[0];
+            if (!byDate[key]) byDate[key] = { spent: 0, pending: 0 };
+            if (tx.status === "settled") byDate[key].spent += tx.amount;
+            else byDate[key].pending += tx.amount;
+        });
+        return Object.entries(byDate)
+            .map(([date, v]) => ({ date, ...v }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+    }, [transactions]);
+
+    const filteredChartData = useMemo(() => {
+        if (spendingChartData.length === 0) return [];
+        const refDate = new Date(spendingChartData[spendingChartData.length - 1].date);
+        let days = 90;
+        if (chartTimeRange === "30d") days = 30;
+        else if (chartTimeRange === "7d") days = 7;
+        const start = new Date(refDate);
+        start.setDate(start.getDate() - days);
+        return spendingChartData.filter((item) => new Date(item.date) >= start);
+    }, [spendingChartData, chartTimeRange]);
+
+    // ─── Category pie chart data ────────────────────────────────────────
+    const PIE_COLORS = ["hsl(221, 83%, 53%)", "hsl(142, 71%, 45%)", "hsl(38, 92%, 50%)", "hsl(280, 65%, 60%)", "hsl(0, 84%, 60%)", "hsl(190, 80%, 45%)"];
+
+    const categoryPieData = useMemo(() => {
+        const byType: Record<string, number> = {};
+        transactions.filter(t => t.status === "settled").forEach(tx => {
+            const key = tx.tx_type === "c2c" ? "transfers"
+                : (tx.intentCategory === "bill_payment" || tx.intent?.toLowerCase().includes("bill") || tx.intent?.toLowerCase().includes("electric") || tx.intent?.toLowerCase().includes("water")) ? "bills"
+                    : tx.tx_type === "merchant_purchase" ? "merchant" : "payments";
+            byType[key] = (byType[key] || 0) + tx.amount;
+        });
+        return Object.entries(byType).map(([name, value]) => ({ name, value, fill: `var(--color-${name})` })).sort((a, b) => b.value - a.value);
+    }, [transactions]);
+
+    const categoryPieConfig: ChartConfig = useMemo(() => {
+        const labels: Record<string, string> = { payments: "QR Payments", transfers: "Transfers", bills: "Bills", merchant: "Merchant" };
+        const cfg: ChartConfig = { value: { label: "Amount" } };
+        categoryPieData.forEach((d, i) => { cfg[d.name] = { label: labels[d.name] || d.name, color: PIE_COLORS[i % PIE_COLORS.length] }; });
+        return cfg;
+    }, [categoryPieData]);
+
+    // ─── Online vs Offline bar chart ────────────────────────────────────
+    const modeBarData = useMemo(() => {
+        const getWeekKey = (d: Date) => { const s = new Date(d); s.setDate(s.getDate() - s.getDay()); return s.toISOString().split("T")[0]; };
+        const byWeek: Record<string, { online: number; offline: number }> = {};
+        transactions.filter(t => t.status === "settled").forEach(tx => {
+            const key = getWeekKey(new Date(tx.timestamp));
+            if (!byWeek[key]) byWeek[key] = { online: 0, offline: 0 };
+            if (tx.mode === "offline") byWeek[key].offline += tx.amount;
+            else byWeek[key].online += tx.amount;
+        });
+        return Object.entries(byWeek)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .slice(-6)
+            .map(([key, v]) => ({ week: new Date(key).toLocaleDateString("en-US", { month: "short", day: "numeric" }), ...v }));
+    }, [transactions]);
+
+    const modeBarConfig: ChartConfig = {
+        online: { label: "Online", color: "hsl(142, 71%, 45%)" },
+        offline: { label: "Offline", color: "hsl(38, 92%, 50%)" },
+    };
+
     // Intent icon mapping
     const getIntentIcon = (tx: Transaction): ReactNode => {
         const cat = tx.intentCategory || tx.tx_type || "";
@@ -150,7 +248,7 @@ function CitizenHome() {
     }
 
     return (
-        <div className="p-4 md:p-6 space-y-5">
+        <div className="p-4 md:p-6 space-y-5 max-w-lg mx-auto">
             {/* Balance Card */}
             <Card className="bg-gradient-to-br from-blue-600 to-blue-700 text-white border-0">
                 <CardContent className="p-5">
@@ -297,6 +395,171 @@ function CitizenHome() {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* ─── Spending Summary Cards ────────────────────────────── */}
+            <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+                <Card className="border-l-4 border-l-primary">
+                    <CardContent className="p-3">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Total Spent</p>
+                        <p className="text-lg font-bold">{formatCurrency(totalSpent)}</p>
+                    </CardContent>
+                </Card>
+                <Card className="border-l-4 border-l-emerald-500">
+                    <CardContent className="p-3">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Today</p>
+                        <p className="text-lg font-bold text-emerald-600">{formatCurrency(todaySpent)}</p>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="p-3">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Settled</p>
+                        <p className="text-lg font-bold">{settledCount}</p>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="p-3">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Pending</p>
+                        <p className="text-lg font-bold text-amber-500">{pendingCount}</p>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* ─── Spending Trend Chart ────────────────────────────────── */}
+            <Card className="pt-0">
+                <CardHeader className="flex items-center gap-2 space-y-0 border-b py-4 sm:flex-row">
+                    <div className="grid flex-1 gap-1">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                            <TrendingUp className="h-4 w-4 text-primary" />
+                            Spending Trend
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                            Your payment activity over time
+                        </CardDescription>
+                    </div>
+                    <Select value={chartTimeRange} onValueChange={setChartTimeRange}>
+                        <SelectTrigger
+                            className="w-[140px] rounded-lg text-xs h-8 sm:ml-auto"
+                            aria-label="Select time range"
+                        >
+                            <SelectValue placeholder="Last 3 months" />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-xl">
+                            <SelectItem value="90d" className="rounded-lg">Last 3 months</SelectItem>
+                            <SelectItem value="30d" className="rounded-lg">Last 30 days</SelectItem>
+                            <SelectItem value="7d" className="rounded-lg">Last 7 days</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </CardHeader>
+                <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+                    {filteredChartData.length > 0 ? (
+                        <ChartContainer config={spendingChartConfig} className="aspect-auto h-[220px] w-full">
+                            <AreaChart data={filteredChartData}>
+                                <defs>
+                                    <linearGradient id="fillSpent" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="var(--color-spent)" stopOpacity={0.8} />
+                                        <stop offset="95%" stopColor="var(--color-spent)" stopOpacity={0.1} />
+                                    </linearGradient>
+                                    <linearGradient id="fillPendingCitizen" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="var(--color-pending)" stopOpacity={0.8} />
+                                        <stop offset="95%" stopColor="var(--color-pending)" stopOpacity={0.1} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid vertical={false} />
+                                <XAxis
+                                    dataKey="date"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tickMargin={8}
+                                    minTickGap={32}
+                                    tickFormatter={(value) => {
+                                        const date = new Date(value);
+                                        return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                                    }}
+                                />
+                                <ChartTooltip
+                                    cursor={false}
+                                    content={
+                                        <ChartTooltipContent
+                                            labelFormatter={(value) =>
+                                                new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+                                            }
+                                            indicator="dot"
+                                        />
+                                    }
+                                />
+                                <Area dataKey="pending" type="natural" fill="url(#fillPendingCitizen)" stroke="var(--color-pending)" stackId="a" />
+                                <Area dataKey="spent" type="natural" fill="url(#fillSpent)" stroke="var(--color-spent)" stackId="a" />
+                                <ChartLegend content={<ChartLegendContent />} />
+                            </AreaChart>
+                        </ChartContainer>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center h-[220px] text-muted-foreground">
+                            <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
+                            <p className="text-sm">No spending data yet</p>
+                            <p className="text-xs mt-1">Make payments to see your spending trend</p>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* ─── Pie + Bar Analytics Row ────────────────────────────── */}
+            <div className="grid gap-4 md:grid-cols-2">
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                            <DollarSign className="h-4 w-4 text-primary" />
+                            Spending Distribution
+                        </CardTitle>
+                        <CardDescription className="text-xs">Breakdown by payment type</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        {categoryPieData.length > 0 ? (
+                            <ChartContainer config={categoryPieConfig} className="mx-auto aspect-square max-h-[250px]">
+                                <RechartsPieChart>
+                                    <ChartTooltip content={<ChartTooltipContent nameKey="name" hideLabel />} />
+                                    <Pie data={categoryPieData} dataKey="value" nameKey="name" innerRadius={60} strokeWidth={5} />
+                                    <ChartLegend content={<ChartLegendContent nameKey="name" />} />
+                                </RechartsPieChart>
+                            </ChartContainer>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
+                                <DollarSign className="h-10 w-10 opacity-20 mb-2" />
+                                <p className="text-sm">No spending data yet</p>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                            <BarChart3 className="h-4 w-4 text-primary" />
+                            Online vs Offline
+                        </CardTitle>
+                        <CardDescription className="text-xs">Weekly payment mode comparison</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        {modeBarData.length > 0 ? (
+                            <ChartContainer config={modeBarConfig} className="aspect-auto h-[250px] w-full">
+                                <RechartsBarChart data={modeBarData}>
+                                    <CartesianGrid vertical={false} />
+                                    <XAxis dataKey="week" tickLine={false} axisLine={false} tickMargin={8} fontSize={11} />
+                                    <YAxis tickLine={false} axisLine={false} width={50} fontSize={11} tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} />
+                                    <ChartTooltip content={<ChartTooltipContent />} />
+                                    <Bar dataKey="online" fill="var(--color-online)" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="offline" fill="var(--color-offline)" radius={[4, 4, 0, 0]} />
+                                    <ChartLegend content={<ChartLegendContent />} />
+                                </RechartsBarChart>
+                            </ChartContainer>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
+                                <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
+                                <p className="text-sm">No data yet</p>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
 
             {/* Queued Payments notice */}
             {transactions.some((t) => t.status === "queued") && (

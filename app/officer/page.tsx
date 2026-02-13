@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { QRCodeDisplay, uploadQRToStorage } from "@/components/qr-code";
@@ -13,6 +13,15 @@ import { signPayload, generateNonce, hexToKey, getPublicKeyHex } from "@/lib/cry
 import { SecureKeyStore } from "@/lib/secure-storage";
 import { useNetwork } from "@/hooks/use-network";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Area, AreaChart, Bar, BarChart as RechartsBarChart, CartesianGrid, Pie, PieChart as RechartsPieChart, XAxis, YAxis } from "recharts";
+import {
+    ChartContainer,
+    ChartLegend,
+    ChartLegendContent,
+    ChartTooltip,
+    ChartTooltipContent,
+    type ChartConfig,
+} from "@/components/ui/chart";
 import {
     QrCode,
     Download,
@@ -29,9 +38,6 @@ import {
     Lock,
     ShieldCheck,
     Loader2,
-    ChevronDown,
-    ChevronUp,
-    Code2,
 } from "lucide-react";
 import {
     Select,
@@ -281,6 +287,79 @@ function OfficerPage() {
         }).length,
         onlineCount: entityTx.filter((t) => t.mode === "online").length,
         offlineCount: entityTx.filter((t) => t.mode === "offline").length,
+    };
+
+    // ─── Collections trend chart ───────────────────────────────────────
+    const [chartTimeRange, setChartTimeRange] = useState("90d");
+
+    const collectionChartConfig: ChartConfig = {
+        settled: { label: "Settled", color: "var(--chart-2)" },
+        pending: { label: "Pending", color: "var(--chart-3)" },
+    };
+
+    const collectionChartData = useMemo(() => {
+        const byDate: Record<string, { settled: number; pending: number }> = {};
+        entityTx.forEach((tx) => {
+            const d = new Date(tx.timestamp);
+            const key = d.toISOString().split("T")[0];
+            if (!byDate[key]) byDate[key] = { settled: 0, pending: 0 };
+            if (tx.status === "settled") byDate[key].settled += tx.amount;
+            else byDate[key].pending += tx.amount;
+        });
+        return Object.entries(byDate)
+            .map(([date, v]) => ({ date, ...v }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+    }, [entityTx]);
+
+    const filteredCollectionChartData = useMemo(() => {
+        if (collectionChartData.length === 0) return [];
+        const refDate = new Date(collectionChartData[collectionChartData.length - 1].date);
+        let days = 90;
+        if (chartTimeRange === "30d") days = 30;
+        else if (chartTimeRange === "7d") days = 7;
+        const start = new Date(refDate);
+        start.setDate(start.getDate() - days);
+        return collectionChartData.filter((item) => new Date(item.date) >= start);
+    }, [collectionChartData, chartTimeRange]);
+
+    // ─── Collection Status Pie ──────────────────────────────────────────
+    const statusPieData = useMemo(() => {
+        const settledAmt = entityTx.filter(t => t.status === "settled").reduce((s, t) => s + t.amount, 0);
+        const queuedAmt = entityTx.filter(t => t.status === "queued" || t.status === "pending").reduce((s, t) => s + t.amount, 0);
+        const failedAmt = entityTx.filter(t => t.status === "failed").reduce((s, t) => s + t.amount, 0);
+        return [
+            { name: "settled", value: settledAmt, fill: "var(--color-settled)" },
+            { name: "queued", value: queuedAmt, fill: "var(--color-queued)" },
+            { name: "failed", value: failedAmt, fill: "var(--color-failed)" },
+        ].filter(d => d.value > 0);
+    }, [entityTx]);
+
+    const statusPieConfig: ChartConfig = {
+        value: { label: "Amount" },
+        settled: { label: "Settled", color: "hsl(142, 71%, 45%)" },
+        queued: { label: "Queued/Pending", color: "hsl(38, 92%, 50%)" },
+        failed: { label: "Failed", color: "hsl(0, 84%, 60%)" },
+    };
+
+    // ─── Online vs Offline Bar ──────────────────────────────────────────
+    const modeBarData = useMemo(() => {
+        const getWeekKey = (d: Date) => { const s = new Date(d); s.setDate(s.getDate() - s.getDay()); return s.toISOString().split("T")[0]; };
+        const byWeek: Record<string, { online: number; offline: number }> = {};
+        entityTx.filter(t => t.status === "settled").forEach(tx => {
+            const key = getWeekKey(new Date(tx.timestamp));
+            if (!byWeek[key]) byWeek[key] = { online: 0, offline: 0 };
+            if (tx.mode === "offline") byWeek[key].offline += tx.amount;
+            else byWeek[key].online += tx.amount;
+        });
+        return Object.entries(byWeek)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .slice(-6)
+            .map(([key, v]) => ({ week: new Date(key).toLocaleDateString("en-US", { month: "short", day: "numeric" }), ...v }));
+    }, [entityTx]);
+
+    const modeBarConfig: ChartConfig = {
+        online: { label: "Online", color: "hsl(142, 71%, 45%)" },
+        offline: { label: "Offline", color: "hsl(38, 92%, 50%)" },
     };
 
     return (
@@ -608,6 +687,130 @@ function OfficerPage() {
                             <RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Refresh
                         </Button>
                     </div>
+
+                    {/* Collections Trend Chart */}
+                    <Card className="pt-0">
+                        <CardHeader className="flex items-center gap-2 space-y-0 border-b py-5 sm:flex-row">
+                            <div className="grid flex-1 gap-1">
+                                <CardTitle className="text-base">Collection Trend</CardTitle>
+                                <CardDescription>Daily settled vs pending collections</CardDescription>
+                            </div>
+                            <Select value={chartTimeRange} onValueChange={setChartTimeRange}>
+                                <SelectTrigger className="hidden w-[160px] rounded-lg sm:ml-auto sm:flex" aria-label="Select time range">
+                                    <SelectValue placeholder="Last 3 months" />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-xl">
+                                    <SelectItem value="90d" className="rounded-lg">Last 3 months</SelectItem>
+                                    <SelectItem value="30d" className="rounded-lg">Last 30 days</SelectItem>
+                                    <SelectItem value="7d" className="rounded-lg">Last 7 days</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </CardHeader>
+                        <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+                            {filteredCollectionChartData.length > 0 ? (
+                                <ChartContainer config={collectionChartConfig} className="aspect-auto h-[220px] w-full">
+                                    <AreaChart data={filteredCollectionChartData}>
+                                        <defs>
+                                            <linearGradient id="fillOfficerSettled" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="var(--color-settled)" stopOpacity={0.8} />
+                                                <stop offset="95%" stopColor="var(--color-settled)" stopOpacity={0.1} />
+                                            </linearGradient>
+                                            <linearGradient id="fillOfficerPending" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="var(--color-pending)" stopOpacity={0.8} />
+                                                <stop offset="95%" stopColor="var(--color-pending)" stopOpacity={0.1} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid vertical={false} />
+                                        <XAxis
+                                            dataKey="date"
+                                            tickLine={false}
+                                            axisLine={false}
+                                            tickMargin={8}
+                                            minTickGap={32}
+                                            tickFormatter={(value) => new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                        />
+                                        <ChartTooltip
+                                            cursor={false}
+                                            content={
+                                                <ChartTooltipContent
+                                                    labelFormatter={(value) => new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                                    indicator="dot"
+                                                />
+                                            }
+                                        />
+                                        <Area dataKey="pending" type="natural" fill="url(#fillOfficerPending)" stroke="var(--color-pending)" stackId="a" />
+                                        <Area dataKey="settled" type="natural" fill="url(#fillOfficerSettled)" stroke="var(--color-settled)" stackId="a" />
+                                        <ChartLegend content={<ChartLegendContent />} />
+                                    </AreaChart>
+                                </ChartContainer>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-[220px] text-muted-foreground">
+                                    <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
+                                    <p className="text-sm">No collection data for chart</p>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* ─── Pie + Bar Analytics Row ──────────────────────── */}
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <Card>
+                            <CardHeader className="pb-2">
+                                <CardTitle className="text-sm flex items-center gap-2">
+                                    <TrendingUp className="h-4 w-4 text-primary" />
+                                    Collection Status
+                                </CardTitle>
+                                <CardDescription className="text-xs">Settled vs queued amounts</CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                {statusPieData.length > 0 ? (
+                                    <ChartContainer config={statusPieConfig} className="mx-auto aspect-square max-h-[250px]">
+                                        <RechartsPieChart>
+                                            <ChartTooltip content={<ChartTooltipContent nameKey="name" hideLabel />} />
+                                            <Pie data={statusPieData} dataKey="value" nameKey="name" innerRadius={55} strokeWidth={5} />
+                                            <ChartLegend content={<ChartLegendContent nameKey="name" />} />
+                                        </RechartsPieChart>
+                                    </ChartContainer>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
+                                        <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
+                                        <p className="text-sm">No collection data</p>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader className="pb-2">
+                                <CardTitle className="text-sm flex items-center gap-2">
+                                    <BarChart3 className="h-4 w-4 text-primary" />
+                                    Online vs Offline
+                                </CardTitle>
+                                <CardDescription className="text-xs">Weekly collection mode comparison</CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                {modeBarData.length > 0 ? (
+                                    <ChartContainer config={modeBarConfig} className="aspect-auto h-[250px] w-full">
+                                        <RechartsBarChart data={modeBarData}>
+                                            <CartesianGrid vertical={false} />
+                                            <XAxis dataKey="week" tickLine={false} axisLine={false} tickMargin={8} fontSize={11} />
+                                            <YAxis tickLine={false} axisLine={false} width={50} fontSize={11} tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} />
+                                            <ChartTooltip content={<ChartTooltipContent />} />
+                                            <Bar dataKey="online" fill="var(--color-online)" radius={[4, 4, 0, 0]} />
+                                            <Bar dataKey="offline" fill="var(--color-offline)" radius={[4, 4, 0, 0]} />
+                                            <ChartLegend content={<ChartLegendContent />} />
+                                        </RechartsBarChart>
+                                    </ChartContainer>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
+                                        <BarChart3 className="h-10 w-10 opacity-20 mb-2" />
+                                        <p className="text-sm">No data yet</p>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </div>
+
                     <Card>
                         <CardContent className="pt-4">
                             {loading ? (

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useWallet } from "@/contexts/wallet-context";
 import { useNetwork } from "@/hooks/use-network";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,16 +38,23 @@ const ALL_DEMO_CONTACTS = [
 export default function C2CPaymentPage() {
     return (
         <RouteGuard allowedRoles={["citizen"]}>
-            <C2CPayment />
+            <Suspense fallback={
+                <div className="flex items-center justify-center h-[60vh]">
+                    <div className="h-10 w-10 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+                </div>
+            }>
+                <C2CPayment />
+            </Suspense>
         </RouteGuard>
     );
 }
 
 function C2CPayment() {
     const router = useRouter();
-    const { balance, updateBalance, addTransaction, user, nid, wallet, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit, creditUser } = useWallet();
+    const { balance, updateBalance, addTransaction, user, nid, wallet, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit } = useWallet();
     const { online } = useNetwork();
     const [toUPA, setToUPA] = useState("");
+    const [scannedName, setScannedName] = useState("");
     const [amount, setAmount] = useState("");
     const [selectedIntent, setSelectedIntent] = useState("");
     const [message, setMessage] = useState("");
@@ -55,6 +62,14 @@ function C2CPayment() {
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => { setMounted(true); }, []);
+
+    // ── Pre-fill from QR scan (when navigated from /pay/scan) ───────
+    useEffect(() => {
+        const to = searchParams.get("to");
+        const name = searchParams.get("name");
+        if (to) setToUPA(to);
+        if (name) setScannedName(name);
+    }, [searchParams]);
 
     const senderUPA = nid?.linkedUPA || user?.upa_id || "unknown@upa.np";
     // Filter contacts: exclude the current user's UPA
@@ -107,7 +122,7 @@ function C2CPayment() {
                         tx_id: data.transaction.txId,
                         tx_type: "c2c",
                         recipient: toUPA,
-                        recipientName: ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
+                        recipientName: DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
                         fromUPA: senderUPA,
                         amount: amt,
                         intent: intentLabel,
@@ -126,7 +141,7 @@ function C2CPayment() {
                     saveLocalTransaction({
                         id: data.transaction.txId,
                         recipient: toUPA,
-                        recipientName: ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
+                        recipientName: DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
                         amount: amt,
                         intent: intentLabel,
                         metadata: { fromUPA: senderUPA, toUPA, intent: selectedIntent, message },
@@ -146,7 +161,7 @@ function C2CPayment() {
 
                     toast.success(`Sent ${formatCurrency(amt)} to ${toUPA}`);
                     setTimeout(() => {
-                        const recipientName = ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA;
+                        const recipientName = DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA;
                         toast.info(`${recipientName} received ${formatCurrency(amt)} for: ${intentLabel}`);
                     }, 2000);
 
@@ -208,7 +223,7 @@ function C2CPayment() {
                     tx_id: queuedTxId,
                     tx_type: "c2c",
                     recipient: toUPA,
-                    recipientName: ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
+                    recipientName: DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
                     fromUPA: senderUPA,
                     amount: amt,
                     intent: intentLabel,
@@ -226,7 +241,7 @@ function C2CPayment() {
                 saveLocalTransaction({
                     id: queuedTxId,
                     recipient: toUPA,
-                    recipientName: ALL_DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
+                    recipientName: DEMO_CONTACTS.find(c => c.upa === toUPA)?.name || toUPA,
                     amount: amt,
                     intent: intentLabel,
                     metadata: { fromUPA: senderUPA, toUPA, intent: selectedIntent, message },
@@ -313,6 +328,12 @@ function C2CPayment() {
                             value={toUPA}
                             onChange={(e) => setToUPA(e.target.value)}
                         />
+                        {scannedName && toUPA && (
+                            <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Scanned from {scannedName}&apos;s QR code
+                            </p>
+                        )}
                     </div>
 
                     {/* Amount */}
@@ -337,8 +358,8 @@ function C2CPayment() {
                                     key={intent}
                                     onClick={() => setSelectedIntent(intent)}
                                     className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${selectedIntent === intent
-                                            ? "bg-green-100 border-green-400 text-green-700"
-                                            : "hover:bg-muted/50"
+                                        ? "bg-green-100 border-green-400 text-green-700"
+                                        : "hover:bg-muted/50"
                                         }`}
                                 >
                                     {intent}
