@@ -8,7 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RouteGuard } from "@/components/route-guard";
 import { formatCurrency } from "@/lib/utils";
+import { generateNonce } from "@/lib/crypto";
+import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { NIDCard } from "@/types";
+import { NIDCameraScanner } from "@/components/nid-camera-scanner";
+import { NIDCardDisplay, NIDCardSkeleton } from "@/components/nid-card-display";
 import {
     Smartphone,
     CreditCard,
@@ -22,6 +26,8 @@ import {
     MapPin,
     Calendar,
     Wallet,
+    Camera,
+    Database,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,7 +39,7 @@ export default function NIDPaymentPage() {
     );
 }
 
-type NFCState = "idle" | "scanning" | "verified" | "error";
+type ScanState = "idle" | "camera" | "scanning" | "verified" | "error";
 type PaySource = "bank" | "esewa" | "khalti";
 
 const MOCK_WALLETS: Record<string, { name: string; id: string; balance: number; color: string; icon: string }> = {
@@ -43,8 +49,8 @@ const MOCK_WALLETS: Record<string, { name: string; id: string; balance: number; 
 
 function NIDPayment() {
     const router = useRouter();
-    const { linkNID, nid, linkedBank, balance, updateBalance, addTransaction, deductFromBank } = useWallet();
-    const [nfcState, setNfcState] = useState<NFCState>(nid ? "verified" : "idle");
+    const { linkNID, nid, linkedBank, balance, updateBalance, addTransaction, deductFromBank, wallet, user } = useWallet();
+    const [scanState, setScanState] = useState<ScanState>(nid ? "verified" : "idle");
     const [manualNID, setManualNID] = useState("");
     const [verifiedNID, setVerifiedNID] = useState<NIDCard | null>(nid);
     const [isLoading, setIsLoading] = useState(false);
@@ -57,17 +63,24 @@ function NIDPayment() {
 
     useEffect(() => { setMounted(true); }, []);
 
-    // Simulate NFC tap
-    const handleNFCTap = async () => {
-        setNfcState("scanning");
+    // Open camera scanner
+    const handleOpenCamera = () => {
+        setScanState("camera");
+    };
+
+    // Handle NID detected from camera
+    const handleNIDDetected = async (nidNumber: string) => {
+        setScanState("scanning");
         setIsLoading(true);
+        toast.info(`Detected: ${nidNumber}`);
+        // Add a small delay to show "processing" state
+        await new Promise(r => setTimeout(r, 500));
+        await verifyNID(nidNumber);
+    };
 
-        // Simulate NFC animation + reading delay
-        await new Promise((r) => setTimeout(r, 2000));
-
-        // Pick Ram's NID for demo
-        const demoNID = "RAM-KTM-1990-4521";
-        await verifyNID(demoNID);
+    // Cancel camera scanning
+    const handleCancelCamera = () => {
+        setScanState("idle");
     };
 
     // Manual NID entry
@@ -77,13 +90,16 @@ function NIDPayment() {
             return;
         }
         setIsLoading(true);
-        setNfcState("scanning");
+        setScanState("scanning");
         await verifyNID(manualNID.trim());
     };
 
     // Verify NID via API
     const verifyNID = async (nidNumber: string) => {
         try {
+            // Show fetching state
+            toast.loading("Querying National ID Registry...", { id: "nid-verify" });
+            
             const res = await fetch("/api/nid", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -91,23 +107,28 @@ function NIDPayment() {
             });
 
             const data = await res.json();
+            toast.dismiss("nid-verify");
 
             if (data.success && data.nid) {
+                // Simulate database lookup delay for realism
+                await new Promise(r => setTimeout(r, 300));
+                
                 const linked = linkNID(data.nid.nidNumber);
                 if (linked) {
                     setVerifiedNID(linked);
-                    setNfcState("verified");
-                    toast.success(`NID Verified: ${data.nid.fullName}`);
+                    setScanState("verified");
+                    toast.success(`✓ Verified: ${data.nid.fullName}`, { duration: 3000 });
                 } else {
-                    setNfcState("error");
+                    setScanState("error");
                     toast.error("NID not in local database");
                 }
             } else {
-                setNfcState("error");
+                setScanState("error");
                 toast.error(data.error || "NID verification failed");
             }
         } catch {
-            setNfcState("error");
+            toast.dismiss("nid-verify");
+            setScanState("error");
             toast.error("Verification failed. Check connection.");
         } finally {
             setIsLoading(false);
@@ -133,9 +154,46 @@ function NIDPayment() {
         }
 
         setPaying(true);
+        const nonce = generateNonce();
+        const now = new Date();
+
         try {
-            // Simulate processing
-            await new Promise((r) => setTimeout(r, 1500));
+            const sourceName = paySource === "bank"
+                ? linkedBank?.bankName || "Bank"
+                : MOCK_WALLETS[paySource].name;
+            const sourceType = paySource === "bank" ? "nid_bank" : paySource;
+
+            // Build payload for API settlement
+            const payload = {
+                version: "1.0" as const,
+                upa: paymentTarget,
+                intent: { id: "nid_payment", category: "payment", label: paymentIntent || "NID Payment" },
+                amount: amt,
+                currency: "NPR",
+                metadata: {
+                    payerName: verifiedNID?.fullName || user?.name || "Citizen",
+                    payerId: user?.id || "",
+                    paymentSource: sourceType,
+                    bankName: sourceName,
+                    nidNumber: verifiedNID?.nidNumber || "",
+                },
+                payer_name: verifiedNID?.fullName || user?.name || "Citizen",
+                payer_id: user?.id || "",
+                issuedAt: now.toISOString(),
+                expiresAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+                nonce,
+                type: "online" as const,
+            };
+
+            // Settle via API to persist to central ledger
+            const res = await fetch("/api/transactions/settle", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ payerUpa: verifiedNID?.linkedUPA || wallet?.address, payload }),
+            });
+            const result = await res.json();
+
+            const txId = result.transaction?.txId || `UPA-2026-${String(Date.now()).slice(-5)}`;
 
             if (paySource === "bank") {
                 deductFromBank(amt);
@@ -145,12 +203,6 @@ function NIDPayment() {
             }
             updateBalance(amt);
 
-            const sourceName = paySource === "bank"
-                ? linkedBank?.bankName || "Bank"
-                : MOCK_WALLETS[paySource].name;
-            const sourceType = paySource === "bank" ? "nid_bank" : paySource;
-
-            const txId = `UPA-2026-${String(Date.now()).slice(-5)}`;
             addTransaction({
                 id: txId,
                 tx_id: txId,
@@ -161,12 +213,31 @@ function NIDPayment() {
                 intent: paymentIntent || "NID Payment",
                 intentCategory: "payment",
                 status: "settled",
-                mode: "nfc",
+                mode: "camera",
                 payment_source: sourceType,
                 bank_name: sourceName,
-                nonce: `nid-${Date.now()}`,
+                nonce,
                 timestamp: Date.now(),
                 settledAt: Date.now(),
+                walletProvider: "upa_pay",
+            });
+
+            // Also save to local storage DB for admin/dashboard reads
+            saveLocalTransaction({
+                id: txId,
+                recipient: paymentTarget,
+                recipientName: paymentTarget,
+                amount: amt,
+                intent: paymentIntent || "NID Payment",
+                metadata: {
+                    paymentSource: sourceType,
+                    bankName: sourceName,
+                    nidNumber: verifiedNID?.nidNumber || "",
+                },
+                status: "settled",
+                mode: "camera",
+                nonce,
+                timestamp: Date.now(),
                 walletProvider: "upa_pay",
             });
 
@@ -188,27 +259,35 @@ function NIDPayment() {
     }
 
     return (
-        <div className="p-4 md:p-6 space-y-5 max-w-lg mx-auto">
+        <div className="p-4 md:p-6 space-y-5">
             <div className="flex items-center gap-3 mb-2">
                 <Button variant="ghost" size="sm" onClick={() => router.back()}>← Back</Button>
-                <h1 className="text-lg font-bold">NID / NFC Payment</h1>
+                <h1 className="text-lg font-bold">NID / Camera Payment</h1>
             </div>
 
-            {/* NFC Tap Area */}
-            {nfcState === "idle" && (
+            {/* Camera Scanner */}
+            {scanState === "camera" && (
+                <NIDCameraScanner 
+                    onNIDDetected={handleNIDDetected}
+                    onCancel={handleCancelCamera}
+                />
+            )}
+
+            {/* Initial State - Show Camera Option */}
+            {scanState === "idle" && (
                 <>
-                    <Card className="border-2 border-dashed border-purple-300 bg-purple-50/50">
+                    <Card className="border-2 border-dashed border-blue-300 bg-blue-50/50">
                         <CardContent className="p-8 text-center">
-                            <div className="mx-auto w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mb-4">
-                                <Smartphone className="h-10 w-10 text-purple-600" />
+                            <div className="mx-auto w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mb-4">
+                                <Camera className="h-10 w-10 text-blue-600" />
                             </div>
-                            <h2 className="text-lg font-semibold mb-2">Tap NID Card</h2>
+                            <h2 className="text-lg font-semibold mb-2">Scan NID Card</h2>
                             <p className="text-sm text-muted-foreground mb-6">
-                                Hold your National ID card near the device to read via NFC
+                                Use your camera to scan and read your National ID card
                             </p>
-                            <Button size="lg" className="w-full bg-purple-600 hover:bg-purple-700" onClick={handleNFCTap}>
-                                <CreditCard className="h-5 w-5 mr-2" />
-                                Simulate NFC Tap
+                            <Button size="lg" className="w-full bg-blue-600 hover:bg-blue-700" onClick={handleOpenCamera}>
+                                <Camera className="h-5 w-5 mr-2" />
+                                Open Camera Scanner
                             </Button>
                         </CardContent>
                     </Card>
@@ -220,11 +299,14 @@ function NIDPayment() {
                         </CardHeader>
                         <CardContent className="space-y-3">
                             <Input
-                                placeholder="NID Number (e.g., RAM-KTM-1990-4521)"
+                                placeholder="NID Number (e.g., 123-456-789 or RAM-KTM-1990-4521)"
                                 value={manualNID}
                                 onChange={(e) => setManualNID(e.target.value.toUpperCase())}
                             />
                             <div className="flex flex-wrap gap-2">
+                                <Button variant="outline" size="sm" className="text-xs" onClick={() => setManualNID("123-456-789")}>
+                                    123-456-789
+                                </Button>
                                 {["RAM-KTM-1990-4521", "SITA-PKR-1995-7832", "HARI-LTP-1988-3214"].map((nid) => (
                                     <Button key={nid} variant="outline" size="sm" className="text-xs" onClick={() => setManualNID(nid)}>
                                         {nid.split("-").slice(0, 2).join("-")}...
@@ -239,73 +321,56 @@ function NIDPayment() {
                 </>
             )}
 
-            {/* Scanning Animation */}
-            {nfcState === "scanning" && (
-                <Card className="border-purple-300">
-                    <CardContent className="p-8 text-center">
-                        <div className="mx-auto w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mb-4 animate-pulse">
-                            <Loader2 className="h-10 w-10 text-purple-600 animate-spin" />
-                        </div>
-                        <h2 className="text-lg font-semibold mb-2">Reading NID Card...</h2>
-                        <p className="text-sm text-muted-foreground">Verifying identity with National ID database</p>
-                    </CardContent>
-                </Card>
-            )}
-
-            {/* Verified NID Display */}
-            {nfcState === "verified" && verifiedNID && (
-                <>
-                    <Card className="border-green-200 bg-green-50/50">
-                        <CardContent className="p-5">
-                            <div className="flex items-center gap-2 mb-4">
-                                <CheckCircle2 className="h-5 w-5 text-green-600" />
-                                <span className="font-semibold text-green-700">NID Verified</span>
-                                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full ml-auto">Active</span>
-                            </div>
-
-                            {/* NID Card Display */}
-                            <div className="bg-white rounded-lg border p-4 space-y-3">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-14 h-14 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
-                                        {verifiedNID.fullName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
-                                    </div>
-                                    <div>
-                                        <p className="font-bold text-base">{verifiedNID.fullName}</p>
-                                        <p className="text-xs text-muted-foreground font-mono">{verifiedNID.nidNumber}</p>
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                    <div className="flex items-center gap-1.5">
-                                        <Calendar className="h-3 w-3 text-muted-foreground" />
-                                        <span className="text-muted-foreground">DOB:</span>
-                                        <span className="font-medium">{verifiedNID.dateOfBirth}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <MapPin className="h-3 w-3 text-muted-foreground" />
-                                        <span className="text-muted-foreground">District:</span>
-                                        <span className="font-medium">{verifiedNID.district}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 col-span-2">
-                                        <User className="h-3 w-3 text-muted-foreground" />
-                                        <span className="text-muted-foreground">UPA:</span>
-                                        <span className="font-medium font-mono">{verifiedNID.linkedUPA}</span>
-                                    </div>
+            {/* Scanning Animation - Shows NID card skeleton while fetching */}
+            {scanState === "scanning" && (
+                <div className="space-y-4">
+                    <NIDCardSkeleton />
+                    <Card className="border-blue-200 bg-blue-50/50">
+                        <CardContent className="p-4 text-center">
+                            <div className="flex items-center justify-center gap-2 text-blue-600">
+                                <Database className="h-4 w-4" />
+                                <span className="text-sm font-medium">Querying National ID Registry</span>
+                                <div className="flex gap-1">
+                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
                                 </div>
                             </div>
-
-                            {/* Linked Bank */}
-                            {linkedBank && (
-                                <div className="mt-3 bg-white rounded-lg border p-3 flex items-center gap-3">
-                                    <Building2 className="h-5 w-5 text-blue-600" />
-                                    <div className="flex-1">
-                                        <p className="text-sm font-medium">{linkedBank.bankName}</p>
-                                        <p className="text-xs text-muted-foreground">Account: {linkedBank.accountNumber}</p>
-                                    </div>
-                                    <Shield className="h-4 w-4 text-green-600" />
-                                </div>
-                            )}
                         </CardContent>
                     </Card>
+                </div>
+            )}
+
+            {/* Verified NID Display — Nagarik-style card */}
+            {scanState === "verified" && verifiedNID && (
+                <>
+                    {/* Verification Badge */}
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <CheckCircle2 className="h-5 w-5 text-green-600" />
+                            <span className="font-semibold text-green-700">NID Verified</span>
+                        </div>
+                        <span className="text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-medium">Active</span>
+                    </div>
+
+                    {/* NID Card — Nagarik app style */}
+                    <NIDCardDisplay nid={verifiedNID} />
+
+                    {/* Linked Bank */}
+                    {linkedBank && (
+                        <Card className="border-blue-100">
+                            <CardContent className="p-3 flex items-center gap-3">
+                                <div className="h-10 w-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                                    <Building2 className="h-5 w-5 text-blue-600" />
+                                </div>
+                                <div className="flex-1">
+                                    <p className="text-sm font-medium">{linkedBank.bankName}</p>
+                                    <p className="text-xs text-muted-foreground">Account: {linkedBank.accountNumber}</p>
+                                </div>
+                                <Shield className="h-4 w-4 text-green-600" />
+                            </CardContent>
+                        </Card>
+                    )}
 
                     {/* Payment Source Selector */}
                     <Card>
@@ -442,20 +507,20 @@ function NIDPayment() {
                     </Card>
 
                     {/* Re-scan button */}
-                    <Button variant="outline" className="w-full" onClick={() => { setNfcState("idle"); setVerifiedNID(null); }}>
+                    <Button variant="outline" className="w-full" onClick={() => { setScanState("idle"); setVerifiedNID(null); }}>
                         Scan Different NID
                     </Button>
                 </>
             )}
 
             {/* Error State */}
-            {nfcState === "error" && (
+            {scanState === "error" && (
                 <Card className="border-red-200 bg-red-50/50">
                     <CardContent className="p-6 text-center">
                         <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-3" />
                         <h2 className="font-semibold text-red-700 mb-2">Verification Failed</h2>
                         <p className="text-sm text-red-600 mb-4">NID card not found or is inactive.</p>
-                        <Button onClick={() => setNfcState("idle")}>Try Again</Button>
+                        <Button onClick={() => setScanState("idle")}>Try Again</Button>
                     </CardContent>
                 </Card>
             )}
