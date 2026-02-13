@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Transaction } from "@/types";
 import { useAutoSync } from "@/hooks/use-auto-sync";
+import { recoverFromWAL } from "@/lib/acid-transaction";
 import { Area, AreaChart, Bar, BarChart as RechartsBarChart, CartesianGrid, Pie, PieChart as RechartsPieChart, XAxis, YAxis } from "recharts";
 import {
     ChartContainer,
@@ -63,30 +64,31 @@ import {
 export function CitizenHome() {
     const router = useRouter();
     const { wallet, balance, nid, linkedBank, offlineWallet, saralPayBalance, transactions: walletTransactions, user } = useWallet();
-    useAutoSync();
+    useAutoSync(!!wallet, offlineWallet);
     const [upaAddress, setUpaAddress] = useState("");
     const [mounted, setMounted] = useState(false);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => { setMounted(true); }, []);
+    useEffect(() => {
+        setMounted(true);
+        // ACID Durability: Recover any incomplete transactions from WAL on startup
+        const { recovered, failed } = recoverFromWAL();
+        if (recovered > 0) {
+            console.log(`[ACID] WAL recovery: ${recovered} transaction(s) recovered, ${failed} failed`);
+        }
+    }, []);
 
     // Determine the current user's UPA for detecting incoming vs outgoing
     const myUPA = nid?.linkedUPA || user?.upa_id || "";
 
     const loadTransactions = useCallback(async () => {
-        // Prefer wallet context transactions (per-user scoped localStorage)
-        if (walletTransactions && walletTransactions.length > 0) {
-            setTransactions(walletTransactions);
-            return;
-        }
-
-        // Fallback: try API then localStorage
+        // Try API first (prioritize Supabase data)
         try {
             const res = await fetch("/api/transactions");
             if (res.ok) {
                 const result = await res.json();
-                if (result.data && Array.isArray(result.data)) {
+                if (result.data && Array.isArray(result.data) && result.data.length > 0) {
                     setTransactions(result.data.map((tx: any) => ({
                         id: tx.id,
                         tx_id: tx.tx_id,
@@ -110,7 +112,14 @@ export function CitizenHome() {
                     return;
                 }
             }
-        } catch { /* fall back */ }
+        } catch (err) { 
+            console.error("Failed to load transactions from API:", err);
+        }
+        
+        // Fallback to wallet context if API fails or returns no data
+        if (walletTransactions && walletTransactions.length > 0) {
+            setTransactions(walletTransactions);
+        }
     }, [walletTransactions]);
 
     useEffect(() => {
@@ -291,55 +300,47 @@ export function CitizenHome() {
                 </CardContent>
             </Card>
 
-            {/* Payment Methods Grid — 6 buttons */}
-            <div className="grid grid-cols-3 gap-3">
+            {/* Payment Methods Grid — 4 buttons */}
+            <div className="grid grid-cols-2 gap-3">
                 <Button
                     variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-blue-50 hover:border-blue-300"
+                    className="h-20 flex-col gap-1.5 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700"
                     onClick={() => router.push("/pay/scan")}
                 >
                     <ScanLine className="h-5 w-5 text-blue-600" />
-                    <span className="text-xs font-medium">Scan QR</span>
+                    <span className="text-xs font-medium text-gray-700">Scan QR</span>
                 </Button>
                 <Button
                     variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-blue-50 hover:border-blue-300"
+                    className="h-20 flex-col gap-1.5 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-700"
                     onClick={() => router.push("/pay/nid")}
                 >
-                    <Camera className="h-5 w-5 text-blue-600" />
-                    <span className="text-xs font-medium">Scan NID</span>
+                    <Camera className="h-5 w-5 text-teal-600" />
+                    <span className="text-xs font-medium text-gray-700">Scan NID</span>
                 </Button>
                 <Button
                     variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-green-50 hover:border-green-300"
+                    className="h-20 flex-col gap-1.5 hover:bg-green-50 hover:border-green-300 hover:text-green-700"
                     onClick={() => router.push("/pay/c2c")}
                 >
                     <Users className="h-5 w-5 text-green-600" />
-                    <span className="text-xs font-medium">Send C2C</span>
+                    <span className="text-xs font-medium text-gray-700">Send to Contact</span>
                 </Button>
                 <Button
                     variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-amber-50 hover:border-amber-300"
+                    className="h-20 flex-col gap-1.5 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700"
                     onClick={() => router.push("/pay/bills")}
                 >
                     <Zap className="h-5 w-5 text-amber-600" />
-                    <span className="text-xs font-medium">Pay Bills</span>
+                    <span className="text-xs font-medium text-gray-700">Pay Bills</span>
                 </Button>
                 <Button
                     variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-purple-50 hover:border-purple-300"
-                    onClick={() => router.push("/pay/nfc")}
+                    className="h-20 flex-col gap-1.5 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 col-span-2"
+                    onClick={() => router.push("/pay/offline")}
                 >
-                    <Smartphone className="h-5 w-5 text-purple-600" />
-                    <span className="text-xs font-medium">NFC Pay</span>
-                </Button>
-                <Button
-                    variant="outline"
-                    className="h-20 flex-col gap-1.5 hover:bg-slate-50 hover:border-slate-300"
-                    onClick={() => router.push("/pay/scan")}
-                >
-                    <Landmark className="h-5 w-5 text-slate-600" />
-                    <span className="text-xs font-medium">Govt Pay</span>
+                    <WifiOff className="h-5 w-5 text-rose-600" />
+                    <span className="text-xs font-medium text-gray-700">Offline Payment (Scan)</span>
                 </Button>
             </div>
 
@@ -379,9 +380,19 @@ export function CitizenHome() {
                         </Button>
                     </div>
                     {offlineWallet.loaded ? (
-                        <div className="flex items-center gap-3">
-                            <p className="text-lg font-bold text-amber-700">{formatCurrency(saralPayBalance)}</p>
-                            <span className="text-[10px] text-amber-600">offline balance</span>
+                        <div className="space-y-3 mt-1">
+                            <div className="flex items-center gap-3">
+                                <p className="text-lg font-bold text-amber-700">{formatCurrency(saralPayBalance)}</p>
+                                <span className="text-[10px] text-amber-600">offline balance</span>
+                            </div>
+                            <Button
+                                size="sm"
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs shadow-sm border border-indigo-200"
+                                onClick={() => router.push("/pay/offline")}
+                            >
+                                <Smartphone className="h-3.5 w-3.5 mr-1.5" />
+                                Scan Cross-Device QR
+                            </Button>
                         </div>
                     ) : (
                         <p className="text-xs text-muted-foreground">

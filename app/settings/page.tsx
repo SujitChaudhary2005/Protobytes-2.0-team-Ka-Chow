@@ -38,8 +38,10 @@ import {
     Info,
     Download,
     Upload,
+    Wallet as WalletIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import { resetDemoData } from "@/lib/demo-seed";
 
 export default function SettingsPage() {
     const router = useRouter();
@@ -67,6 +69,7 @@ export default function SettingsPage() {
     const [showBalance, setShowBalance] = useState(true);
     const [language, setLanguage] = useState("en");
     const [showClearConfirm, setShowClearConfirm] = useState(false);
+    const [demoMode, setDemoMode] = useState(false);
 
     useEffect(() => {
         setMounted(true);
@@ -82,6 +85,7 @@ export default function SettingsPage() {
                 setBiometric(p.biometric ?? false);
                 setShowBalance(p.showBalance ?? true);
                 setLanguage(p.language ?? "en");
+                setDemoMode(p.demoMode ?? false);
             } catch { /* ignore */ }
         }
 
@@ -240,8 +244,8 @@ export default function SettingsPage() {
                         </div>
                     )}
 
-                    {/* Wallet Info */}
-                    {wallet && (
+                    {/* Wallet Info - Citizens Only */}
+                    {wallet && role === "citizen" && (
                         <>
                             <Separator />
                             <div className="grid grid-cols-2 gap-3">
@@ -261,8 +265,99 @@ export default function SettingsPage() {
                             </div>
                         </>
                     )}
+
+                    {/* Admin Info - Admin/Superadmin Only */}
+                    {(role === "admin" || role === "superadmin") && (
+                        <>
+                            <Separator />
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
+                                    <p className="text-xs text-blue-600 mb-1 font-medium">Access Level</p>
+                                    <p className="text-sm font-semibold text-blue-700">Government Portal</p>
+                                </div>
+                                <div className="bg-green-50 rounded-lg p-3 border border-green-100">
+                                    <p className="text-xs text-green-600 mb-1 font-medium">Permissions</p>
+                                    <p className="text-sm font-semibold text-green-700">Full System Access</p>
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </CardContent>
             </Card>
+
+            {/* ── System Monitoring (Admin/Superadmin Only) ─────────────────────────── */}
+            {(role === "admin" || role === "superadmin") && (
+                <Card className="border-blue-200 bg-blue-50/30">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <Shield className="h-4 w-4 text-blue-600" />
+                            System Monitoring
+                        </CardTitle>
+                        <CardDescription>Real-time oversight of UPA payment ecosystem</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        {/* Statistics Grid */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-white rounded-lg p-3 border border-blue-100">
+                                <p className="text-xs text-muted-foreground mb-1">Total Transactions</p>
+                                <p className="text-2xl font-bold text-blue-700">12,458</p>
+                                <p className="text-xs text-green-600 mt-1">↑ 23% this week</p>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-blue-100">
+                                <p className="text-xs text-muted-foreground mb-1">Active Users</p>
+                                <p className="text-2xl font-bold text-blue-700">3,842</p>
+                                <p className="text-xs text-green-600 mt-1">↑ 15% this week</p>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-blue-100">
+                                <p className="text-xs text-muted-foreground mb-1">Total Volume</p>
+                                <p className="text-2xl font-bold text-blue-700">NPR 84.5M</p>
+                                <p className="text-xs text-green-600 mt-1">↑ 31% this month</p>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-blue-100">
+                                <p className="text-xs text-muted-foreground mb-1">NID Verifications</p>
+                                <p className="text-2xl font-bold text-blue-700">2,156</p>
+                                <p className="text-xs text-green-600 mt-1">↑ 18% this week</p>
+                            </div>
+                        </div>
+
+                        {/* Quick Actions */}
+                        <Separator />
+                        <div className="space-y-2">
+                            <Button 
+                                variant="outline" 
+                                className="w-full justify-between"
+                                onClick={() => router.push("/admin")}
+                            >
+                                <span className="flex items-center gap-2">
+                                    <Shield className="h-4 w-4" />
+                                    Admin Dashboard
+                                </span>
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                            <Button 
+                                variant="outline" 
+                                className="w-full justify-between"
+                            >
+                                <span className="flex items-center gap-2">
+                                    <AlertTriangle className="h-4 w-4" />
+                                    Fraud Detection (3 alerts)
+                                </span>
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                            <Button 
+                                variant="outline" 
+                                className="w-full justify-between"
+                            >
+                                <span className="flex items-center gap-2">
+                                    <Download className="h-4 w-4" />
+                                    Generate Reports
+                                </span>
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* ── Linked Accounts ─────────────────────────── */}
             {role === "citizen" && (
@@ -317,6 +412,83 @@ export default function SettingsPage() {
                                     Link
                                 </Button>
                             )}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* ── Payment Sources ─────────────────────────── */}
+            {role === "citizen" && (
+                <Card>
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <CreditCard className="h-4 w-4 text-primary" />
+                            Payment Sources
+                        </CardTitle>
+                        <CardDescription>Manage your linked banks and payment gateways</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        {/* Bank Account */}
+                        {linkedBank && (
+                            <div className="flex items-center justify-between p-3 rounded-lg border border-blue-100 bg-blue-50/30">
+                                <div className="flex items-center gap-3">
+                                    <div className="h-10 w-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                                        <Building2 className="h-5 w-5 text-blue-600" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium">{linkedBank.bankName}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            Account: {linkedBank.accountNumber}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="bg-white">
+                                        <CheckCircle2 className="h-3 w-3 mr-1 text-green-500" />
+                                        Primary
+                                    </Badge>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* eSewa */}
+                        <div className="flex items-center justify-between p-3 rounded-lg border border-green-100 bg-green-50/30">
+                            <div className="flex items-center gap-3">
+                                <div className="h-10 w-10 rounded-lg bg-green-100 flex items-center justify-center">
+                                    <WalletIcon className="h-5 w-5 text-green-600" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-medium">eSewa</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        ID: 9841-XXXXX-12 &middot; Bal: NPR 12,500
+                                    </p>
+                                </div>
+                            </div>
+                            <CheckCircle2 className="h-5 w-5 text-green-500" />
+                        </div>
+
+                        {/* Khalti */}
+                        <div className="flex items-center justify-between p-3 rounded-lg border border-purple-100 bg-purple-50/30">
+                            <div className="flex items-center gap-3">
+                                <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                                    <WalletIcon className="h-5 w-5 text-purple-600" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-medium">Khalti</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        ID: 9812-XXXXX-98 &middot; Bal: NPR 8,200
+                                    </p>
+                                </div>
+                            </div>
+                            <CheckCircle2 className="h-5 w-5 text-purple-500" />
+                        </div>
+
+                        {/* Info */}
+                        <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground mt-2">
+                            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                            <span>
+                                Payment sources are used during checkout. Link your bank account via NID verification to enable bank payments.
+                            </span>
                         </div>
                     </CardContent>
                 </Card>
@@ -390,63 +562,6 @@ export default function SettingsPage() {
                 </Card>
             )}
 
-            {/* ── Appearance & Preferences ────────────────── */}
-            <Card>
-                <CardHeader className="pb-3">
-                    <CardTitle className="text-base flex items-center gap-2">
-                        <Sun className="h-4 w-4 text-primary" />
-                        Appearance & Preferences
-                    </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-1">
-                    {/* Dark Mode */}
-                    <SettingRow
-                        icon={darkMode ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-                        label="Dark Mode"
-                        description="Switch between light and dark theme"
-                        action={
-                            <ToggleSwitch checked={darkMode} onChange={toggleDarkMode} />
-                        }
-                    />
-
-                    <Separator />
-
-                    {/* Notifications */}
-                    <SettingRow
-                        icon={<Bell className="h-4 w-4" />}
-                        label="Notifications"
-                        description="Transaction alerts and updates"
-                        action={
-                            <ToggleSwitch checked={notifications} onChange={toggleNotifications} />
-                        }
-                    />
-
-                    <Separator />
-
-                    {/* Language */}
-                    <SettingRow
-                        icon={<Globe className="h-4 w-4" />}
-                        label="Language"
-                        description={language === "en" ? "English" : "नेपाली"}
-                        action={
-                            <div className="flex gap-1">
-                                <button
-                                    onClick={() => handleLanguageChange("en")}
-                                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${language === "en" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
-                                >
-                                    EN
-                                </button>
-                                <button
-                                    onClick={() => handleLanguageChange("ne")}
-                                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${language === "ne" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
-                                >
-                                    नेपाली
-                                </button>
-                            </div>
-                        }
-                    />
-                </CardContent>
-            </Card>
 
             {/* ── Security ────────────────────────────────── */}
             <Card>
@@ -582,6 +697,7 @@ export default function SettingsPage() {
                     )}
                 </CardContent>
             </Card>
+
 
             {/* ── About ───────────────────────────────────── */}
             <Card>

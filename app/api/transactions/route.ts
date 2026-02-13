@@ -68,8 +68,27 @@ export async function GET(request: NextRequest) {
 
       const summary = buildSummary(allTx || []);
 
+      const normalized = (data || []).map((tx: any) => {
+        const upaAddress = tx.upas?.address || tx.upa_address || tx.upa_id || null;
+        const entityName = tx.upas?.entity_name || tx.entity_name || null;
+        const intentLabel = tx.intents?.label || tx.intent_label || null;
+        const intentCategory = tx.intents?.category || tx.intent_category || null;
+        const intentCode = tx.intents?.intent_code || tx.intent_code || null;
+
+        return {
+          ...tx,
+          upa_address: upaAddress,
+          entity_name: entityName,
+          intent_label: intentLabel,
+          intent_category: intentCategory,
+          intent_code: intentCode,
+          recipient: tx.recipient || upaAddress,
+          recipientName: tx.recipientName || entityName,
+        };
+      });
+
       return NextResponse.json({
-        data: data || [],
+        data: normalized,
         pagination: { page, total: count || 0, totalPages: Math.ceil((count || 0) / limit) },
         summary,
       });

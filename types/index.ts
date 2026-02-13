@@ -3,7 +3,7 @@
 // ============================================
 
 // === User & Role Types ===
-export type UserRole = "citizen" | "officer" | "merchant" | "admin";
+export type UserRole = "citizen" | "officer" | "merchant" | "admin" | "superadmin";
 
 export interface AppUser {
   id: string;
@@ -185,18 +185,29 @@ export interface MetadataField {
 export type TransactionType = "payment" | "c2c" | "nid_payment" | "bill_payment" | "merchant_purchase";
 export type PaymentSource = "wallet" | "nid_bank" | "bank_gateway" | "esewa" | "khalti";
 
+/** Settlement lifecycle states for offline transactions */
+export type SettlementState =
+  | "accepted_offline"
+  | "sync_pending"
+  | "settled"
+  | "rejected"
+  | "reversed"
+  | "expired";
+
 export interface Transaction {
   id: string;
   tx_id?: string;
   tx_type?: TransactionType;
+  client_tx_id?: string;       // Stable UUID for idempotent sync
   recipient: string;
   recipientName?: string;
-  fromUPA?: string;          // For C2C — sender's UPA
+  fromUPA?: string;            // For C2C — sender's UPA
   amount: number;
   intent: string;
   intentCategory?: string;
   metadata?: Record<string, string>;
   status: "pending" | "settled" | "failed" | "queued" | "syncing";
+  settlement_state?: SettlementState;
   mode: "online" | "offline" | "nfc" | "camera";
   payment_source?: PaymentSource;
   bank_name?: string;
@@ -207,7 +218,43 @@ export interface Transaction {
   settledAt?: number;
   syncedAt?: number;
   walletProvider?: string;
-  message?: string;          // C2C message
+  message?: string;            // C2C message
+  // Offline lifecycle fields
+  offline_expires_at?: number;  // Epoch ms when the tx expires
+  sender_device_id?: string;
+  receiver_device_id?: string;
+  sender_signature?: string;
+  receiver_signature?: string;
+  rejection_reason?: string;
+  sync_attempts?: number;
+  proof?: Record<string, unknown>;
+}
+
+/**
+ * Local record for an offline-accepted transaction.
+ * Stored in IndexedDB (Dexie) for both sender and receiver sides.
+ */
+export interface OfflineAcceptedTx {
+  id?: number;                // Dexie auto-id
+  client_tx_id: string;       // Stable UUID shared by sender & receiver
+  nonce: string;
+  senderUPA: string;
+  senderName: string;
+  receiverUPA: string;
+  receiverName: string;
+  amount: number;
+  intent: string;
+  acceptedAt: number;         // Epoch ms
+  expiresAt: number;          // Epoch ms
+  settlement_state: SettlementState;
+  sender_signature: string;
+  receiver_signature: string;
+  sender_device_id: string;
+  receiver_device_id: string;
+  proof: Record<string, unknown>;
+  syncedAt?: number;
+  rejection_reason?: string;
+  sync_attempts: number;
 }
 
 // === Wallet Types ===

@@ -15,11 +15,12 @@ import { VerificationPanel } from "@/components/verification-panel";
 import type { StaticQRPayload } from "@/types";
 import { Shield, Wifi, WifiOff, Loader2, AlertTriangle, QrCode, Smartphone, Link as LinkIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 
 function ConfirmContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { wallet, addTransaction, updateBalance, canSpendOffline, spendFromSaralPay, offlineWallet, saralPayBalance } = useWallet();
+    const { wallet, addTransaction, updateBalance, canSpendOffline, spendFromSaralPay, offlineWallet, saralPayBalance, user, nid } = useWallet();
     const { online } = useNetwork();
 
     const [staticPayload, setStaticPayload] = useState<StaticQRPayload | null>(null);
@@ -37,11 +38,22 @@ function ConfirmContent() {
     // Payment method (qr or nfc)
     const [paymentMethod, setPaymentMethod] = useState<"qr" | "nfc" | null>(null);
 
-    // Citizen-entered fields
+    // Citizen-entered fields — pre-fill from NID/user for demo convenience
     const [payerName, setPayerName] = useState("");
     const [payerId, setPayerId] = useState("");
     const [amount, setAmount] = useState("");
     const [metadata, setMetadata] = useState<Record<string, string>>({});
+
+    // Auto-fill payer fields from linked NID / user profile (DEMO convenience)
+    useEffect(() => {
+        if (nid) {
+            if (!payerName) setPayerName(nid.fullName || "");
+            if (!payerId) setPayerId(nid.nidNumber || "");
+        } else if (user) {
+            if (!payerName) setPayerName(user.name || "");
+            if (!payerId) setPayerId(user.nidNumber || user.id?.slice(0, 12) || "");
+        }
+    }, [nid, user]);
 
     useEffect(() => {
         const data = searchParams.get("data");
@@ -181,6 +193,9 @@ function ConfirmContent() {
                 const txId = result.transaction?.txId || `UPA-${Date.now()}`;
 
                 updateBalance(parsedAmount);
+                toast.success(`Payment of NPR ${parsedAmount.toLocaleString()} settled!`, {
+                    description: `${intentLabel} → ${staticPayload.entity_name}`
+                });
                 addTransaction({
                     id: txId,
                     tx_id: txId,
@@ -227,11 +242,12 @@ function ConfirmContent() {
                     return;
                 }
 
-                // Offline queue — preserve signature from officer-signed QR
+                // Offline queue — don't pass signature for modified payload
+                // (Original QR signature won't match client-modified fullPayload)
                 await queueTransaction({
                     payload: JSON.stringify(fullPayload),
-                    signature: staticPayload.signature || "",
-                    publicKey: staticPayload.publicKey || "",
+                    signature: "",  // Clear signature since payload was modified
+                    publicKey: "",  // Clear public key
                     nonce,
                     recipient: staticPayload.upa,
                     amount: parsedAmount,
@@ -240,8 +256,11 @@ function ConfirmContent() {
                     timestamp: Date.now(),
                 });
 
-                updateBalance(parsedAmount);
+                // Only deduct from SaralPay wallet (not main balance)
                 spendFromSaralPay(parsedAmount);
+                toast.info("Payment queued offline — will auto-settle when online", {
+                    description: `${intentLabel} → ${staticPayload.entity_name}: NPR ${parsedAmount.toLocaleString()}`
+                });
                 addTransaction({
                     id: `queued_${Date.now()}`,
                     recipient: staticPayload.upa,

@@ -1,17 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getTransactions } from "@/lib/storage";
 import { Transaction } from "@/types";
-import { isSupabaseConfigured, subscribeToTransactions } from "@/lib/supabase";
+import { subscribeToTransactions } from "@/lib/supabase";
 import { toast } from "sonner";
 import { RouteGuard } from "@/components/route-guard";
 import { useAutoSync } from "@/hooks/use-auto-sync";
-import { Area, AreaChart, Bar, BarChart as RechartsBarChart, CartesianGrid, Pie, PieChart as RechartsPieChart, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart as RechartsBarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import {
     ChartContainer,
     ChartLegend,
@@ -32,7 +32,6 @@ import {
     DollarSign,
     CheckCircle2,
     Clock,
-    XCircle,
     Activity,
     Download,
     Search,
@@ -53,7 +52,12 @@ import {
     Receipt,
     IdCard,
     Coins,
+    Siren,
+    Eye,
+    ShieldAlert,
+    XCircle
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 export default function AdminPageWrapper() {
     return (
@@ -64,13 +68,43 @@ export default function AdminPageWrapper() {
 }
 
 function AdminDashboard() {
-    useAutoSync(); // Auto-sync queued offline payments when coming back online
+    useAutoSync(true, { loaded: false, balance: 0, initialLoadAmount: 0, loadedAt: 0, lastReset: Date.now() }); // Admin auto-sync
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<"all" | "settled" | "pending" | "failed">("all");
     const [searchQuery, setSearchQuery] = useState("");
     const [reconciling, setReconciling] = useState(false);
     const [reconReport, setReconReport] = useState<any>(null);
+    const [flaggedTxIds, setFlaggedTxIds] = useState<Set<string>>(new Set());
+
+    // Load flagged transactions from localStorage
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            const stored = localStorage.getItem("mof_flagged_txs");
+            if (stored) {
+                try {
+                    setFlaggedTxIds(new Set(JSON.parse(stored)));
+                } catch (e) {
+                    console.error("Failed to parse flagged transactions", e);
+                }
+            }
+        }
+    }, []);
+
+    const [dismissedTxIds, setDismissedTxIds] = useState<Set<string>>(new Set());
+
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            const stored = localStorage.getItem("mof_dismissed_txs");
+            if (stored) {
+                try {
+                    setDismissedTxIds(new Set(JSON.parse(stored)));
+                } catch (e) {
+                    console.error("Failed to parse dismissed transactions", e);
+                }
+            }
+        }
+    }, []);
 
     // UPA ID lookup state
     const [upaLookupQuery, setUpaLookupQuery] = useState("");
@@ -93,18 +127,31 @@ function AdminDashboard() {
                         intent: tx.intent || tx.intent_label || "",
                         metadata: tx.metadata || {},
                         status: tx.status,
+                        settlement_state: tx.settlement_state || undefined,
                         mode: tx.mode || "online",
                         signature: tx.signature,
                         publicKey: tx.publicKey,
                         timestamp: tx.timestamp || new Date(tx.issued_at || tx.created_at || Date.now()).getTime(),
                         nonce: tx.nonce,
                         walletProvider: tx.walletProvider || tx.wallet_provider,
+                        client_tx_id: tx.client_tx_id || undefined,
+                        offline_expires_at: tx.offline_expires_at ? new Date(tx.offline_expires_at).getTime() : undefined,
+                        rejection_reason: tx.rejection_reason || undefined,
                     })));
                     return;
                 }
             }
+        } catch (err) { 
+            console.error("Failed to load from API:", err);
+        }
+        
+        // Fallback to localStorage only if API fails or returns no data
+        try { 
+            const localData = getTransactions();
+            if (localData && localData.length > 0) {
+                setTransactions(localData);
+            }
         } catch { /* ignore */ }
-        try { setTransactions(getTransactions()); } catch { /* ignore */ }
     }, []);
 
     // Initial load
@@ -215,6 +262,13 @@ function AdminDashboard() {
         }).reduce((sum, t) => sum + t.amount, 0),
         onlineCount: transactions.filter((t) => t.mode === "online").length,
         offlineCount: transactions.filter((t) => t.mode === "offline").length,
+        // Settlement state counts for offline lifecycle
+        offlineAccepted: transactions.filter((t) => t.settlement_state === "accepted_offline").length,
+        offlineSyncPending: transactions.filter((t) => t.settlement_state === "sync_pending").length,
+        offlineSettled: transactions.filter((t) => t.settlement_state === "settled").length,
+        offlineRejected: transactions.filter((t) => t.settlement_state === "rejected").length,
+        offlineReversed: transactions.filter((t) => t.settlement_state === "reversed").length,
+        offlineExpired: transactions.filter((t) => t.settlement_state === "expired").length,
     };
 
     // Group by entity (recipient)
@@ -237,6 +291,41 @@ function AdminDashboard() {
     }, {} as Record<string, { count: number; amount: number }>);
 
     const reconciliationRate = stats.total > 0 ? Math.round((stats.settled / stats.total) * 100) : 100;
+
+    // ─── Anomaly Detection Logic ─────────────────────────────────────────
+    const anomalousTransactions = useMemo(() => {
+        return transactions.filter(tx => {
+            if (dismissedTxIds.has(tx.id)) return false;
+            // Rule 1: High value offline transaction (High Risk)
+            if (tx.mode === "offline" && tx.amount > 5000) return true;
+            // Rule 2: Very high value online transaction
+            if (tx.amount > 100000) return true;
+            // Rule 3: Explicitly flagged by admin
+            if (flaggedTxIds.has(tx.id)) return true;
+            return false;
+        }).sort((a, b) => b.timestamp - a.timestamp);
+    }, [transactions, flaggedTxIds, dismissedTxIds]);
+
+    const toggleFlag = (id: string) => {
+        const next = new Set(flaggedTxIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setFlaggedTxIds(next);
+        if (typeof window !== "undefined") {
+            localStorage.setItem("mof_flagged_txs", JSON.stringify(Array.from(next)));
+        }
+        toast.info(next.has(id) ? "Transaction flagged" : "Flag removed");
+    };
+
+    const dismissTx = (id: string) => {
+        const next = new Set(dismissedTxIds);
+        next.add(id);
+        setDismissedTxIds(next);
+        if (typeof window !== "undefined") {
+            localStorage.setItem("mof_dismissed_txs", JSON.stringify(Array.from(next)));
+        }
+        toast.info("Transaction dismissed");
+    };
 
     // ─── Chart: Revenue trend by day ───────────────────────────────────
     const [chartTimeRange, setChartTimeRange] = useState("90d");
@@ -333,32 +422,111 @@ function AdminDashboard() {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h2 className="text-2xl font-semibold flex items-center gap-2">
-                        <Building2 className="h-6 w-6 text-primary" /> Nepal Government Dashboard
+                    <h2 className="text-2xl font-bold flex items-center gap-2 text-primary">
+                        <Building2 className="h-7 w-7" /> Ministry of Finance & IRD Oversight
                     </h2>
-                    <p className="text-sm text-muted-foreground">National UPA Payment Oversight & Reconciliation</p>
+                    <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-1">
+                        <ShieldAlert className="h-3.5 w-3.5 text-warning" />
+                        Unified Payment System Monitoring & Red Flag Detection
+                    </p>
                 </div>
                 <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => {
                         if (transactions.length === 0) { toast.error("No transactions to export"); return; }
-                        const headers = ["Tx ID", "Recipient", "Amount", "Intent", "Status", "Mode", "Date"];
+                        const headers = ["Tx ID", "Recipient", "Amount", "Intent", "Status", "Mode", "Suspicious", "Date"];
                         const rows = transactions.map(t => [
                             t.id, t.recipient || "", t.amount, t.intent || "", t.status, t.mode || "online",
+                            flaggedTxIds.has(t.id) ? "Yes" : "No",
                             new Date(t.timestamp).toISOString()
                         ]);
                         const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
                         const blob = new Blob([csv], { type: "text/csv" });
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
-                        a.href = url; a.download = `upa-transactions-${Date.now()}.csv`; a.click();
+                        a.href = url; a.download = `mof-oversight-report-${Date.now()}.csv`; a.click();
                         URL.revokeObjectURL(url);
-                        toast.success(`Exported ${transactions.length} transactions`);
-                    }}><Download className="h-4 w-4 mr-2" /> Export</Button>
+                        toast.success(`Exported ${transactions.length} records`);
+                    }}><Download className="h-4 w-4 mr-2" /> Export Report</Button>
                     <Button onClick={loadTransactions} disabled={loading} size="sm">
                         <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Refresh
                     </Button>
                 </div>
             </div>
+
+            {/* Red Flags & Suspicious Activity Section */}
+            {anomalousTransactions.length > 0 && (
+                <Card className="border-destructive/30 bg-destructive/5">
+                    <CardHeader className="pb-3 border-b border-destructive/10">
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-base flex items-center gap-2 text-destructive">
+                                <Siren className="h-5 w-5 animate-pulse" /> Red Flags & Suspicious Activity
+                            </CardTitle>
+                            <Badge variant="destructive" className="animate-in fade-in zoom-in">
+                                {anomalousTransactions.length} Anomalies Detected
+                            </Badge>
+                        </div>
+                        <CardDescription className="text-destructive/80">
+                            Transactions requiring IRD/MOF attention due to high value, offline mode, or rapid frequency.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="pt-4 space-y-3">
+                        {anomalousTransactions.slice(0, 5).map((tx) => (
+                            <div key={tx.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-background border rounded-lg shadow-sm">
+                                <div className="flex items-start gap-3">
+                                    <div className={`p-2 rounded-full ${tx.mode === "offline" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive"}`}>
+                                        <AlertTriangle className="h-4 w-4" />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <p className="font-semibold text-sm">{tx.recipientName || "Unknown Entity"}</p>
+                                            <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-warning/50 text-warning bg-warning/5">
+                                                {tx.mode === "offline" ? "Offline High Value" : "High Value"}
+                                            </Badge>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-0.5">
+                                            {tx.id} • {formatDate(tx.timestamp)}
+                                        </p>
+                                        <p className="text-xs font-medium mt-1">
+                                            {tx.intent || "Unspecified Purpose"}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="mt-3 sm:mt-0 flex items-center gap-3">
+                                    <div className="text-right mr-2">
+                                        <p className="font-bold text-lg">{formatCurrency(tx.amount)}</p>
+                                        <p className={`text-xs capitalize ${tx.status === "failed" ? "text-destructive" : "text-success"}`}>
+                                            {tx.status}
+                                        </p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {!flaggedTxIds.has(tx.id) && (
+                                            <Button variant="ghost" size="sm" onClick={() => dismissTx(tx.id)} className="text-muted-foreground hover:text-foreground">
+                                                Dismiss
+                                            </Button>
+                                        )}
+                                        <Button
+                                            variant={flaggedTxIds.has(tx.id) ? "default" : "outline"}
+                                            size="sm"
+                                            className={flaggedTxIds.has(tx.id) ? "bg-destructive hover:bg-destructive/90" : "border-destructive/30 text-destructive hover:bg-destructive/10"}
+                                            onClick={() => toggleFlag(tx.id)}
+                                        >
+                                            <span className="flex items-center">
+                                                {flaggedTxIds.has(tx.id) ? <CheckCircle2 className="h-4 w-4 mr-1" /> : <ShieldAlert className="h-4 w-4 mr-1" />}
+                                                {flaggedTxIds.has(tx.id) ? "Flagged" : "Flag"}
+                                            </span>
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                        {anomalousTransactions.length > 5 && (
+                            <Button variant="ghost" size="sm" className="w-full text-xs text-muted-foreground">
+                                View {anomalousTransactions.length - 5} more anomalies
+                            </Button>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
 
             {/* National Stats */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -404,7 +572,45 @@ function AdminDashboard() {
                 </Card>
             </div>
 
-            {/* Entity + Intent Breakdown */}
+            {/* Offline Settlement State Breakdown */}
+            {stats.offlineCount > 0 && (
+                <Card className="border-l-4 border-l-purple-500">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <WifiOff className="h-4 w-4 text-purple-500" /> Offline Settlement Lifecycle
+                        </CardTitle>
+                        <CardDescription>Settlement state breakdown for offline transactions</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                            <div className="flex flex-col items-center p-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                                <span className="text-2xl font-bold text-blue-500">{stats.offlineAccepted}</span>
+                                <span className="text-xs text-muted-foreground">Accepted</span>
+                            </div>
+                            <div className="flex flex-col items-center p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                <span className="text-2xl font-bold text-amber-500">{stats.offlineSyncPending}</span>
+                                <span className="text-xs text-muted-foreground">Sync Pending</span>
+                            </div>
+                            <div className="flex flex-col items-center p-2 rounded-lg bg-green-500/10 border border-green-500/20">
+                                <span className="text-2xl font-bold text-green-500">{stats.offlineSettled}</span>
+                                <span className="text-xs text-muted-foreground">Settled</span>
+                            </div>
+                            <div className="flex flex-col items-center p-2 rounded-lg bg-red-500/10 border border-red-500/20">
+                                <span className="text-2xl font-bold text-red-500">{stats.offlineRejected}</span>
+                                <span className="text-xs text-muted-foreground">Rejected</span>
+                            </div>
+                            <div className="flex flex-col items-center p-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                                <span className="text-2xl font-bold text-orange-500">{stats.offlineReversed}</span>
+                                <span className="text-xs text-muted-foreground">Reversed</span>
+                            </div>
+                            <div className="flex flex-col items-center p-2 rounded-lg bg-gray-500/10 border border-gray-500/20">
+                                <span className="text-2xl font-bold text-gray-500">{stats.offlineExpired}</span>
+                                <span className="text-xs text-muted-foreground">Expired</span>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
             <div className="grid gap-4 md:grid-cols-2">
                 {/* Revenue by Entity */}
                 <Card>
@@ -828,8 +1034,8 @@ function AdminDashboard() {
                                                     <p className="font-medium text-sm">{tx.intent}</p>
                                                     {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
                                                         : tx.status === "pending" || tx.status === "queued" ? <Clock className="h-3.5 w-3.5 text-warning shrink-0" />
-                                                            : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
-                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tx.status === "settled" ? "bg-success/10 text-success" : tx.status === "pending" || tx.status === "queued" ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger"}`}>{tx.status}</span>
+                                                            : <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />}
+                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tx.status === "settled" ? "bg-success/10 text-success" : tx.status === "pending" || tx.status === "queued" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive"}`}>{tx.status}</span>
                                                 </div>
                                                 <p className="text-xs text-muted-foreground truncate">{tx.recipientName || tx.recipient}</p>
                                                 <div className="flex items-center gap-2 mt-1">
@@ -866,4 +1072,3 @@ function AdminDashboard() {
         </div>
     );
 }
-

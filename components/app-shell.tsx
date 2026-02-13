@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { BottomNav } from "@/components/bottom-nav";
 import { OfflineToggle } from "@/components/offline-toggle";
+import { NetworkStatusBadge } from "@/components/network-status-badge";
 
 // Routes that should NOT show the sidebar/header
 const FULL_SCREEN_ROUTES = ["/auth", "/demo"];
@@ -46,6 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </main>
             </SidebarInset>
             <BottomNav />
+            <NetworkStatusBadge />
         </SidebarProvider>
     );
 }

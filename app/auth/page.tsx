@@ -13,6 +13,7 @@ const ROLE_ROUTES: Record<UserRole, string> = {
     officer: "/officer",
     merchant: "/merchant",
     admin: "/admin",
+    superadmin: "/admin",
 };
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -20,6 +21,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
     officer: "Gov Office Portal",
     merchant: "Merchant Dashboard",
     admin: "Gov Admin Panel",
+    superadmin: "Gov Admin Panel",
 };
 
 export default function AuthPage() {

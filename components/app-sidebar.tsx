@@ -71,25 +71,13 @@ const navItems: NavItem[] = [
         title: "Gov Dashboard",
         url: "/admin",
         icon: Building2,
-        roles: ["admin"],
+        roles: ["admin", "superadmin"],
     },
     {
         title: "Settings",
         url: "/settings",
         icon: Settings,
-        roles: ["citizen", "officer", "merchant", "admin"],
-    },
-    {
-        title: "Demo Overview",
-        url: "/demo",
-        icon: Presentation,
-        roles: ["citizen", "officer", "merchant", "admin"],
-    },
-    {
-        title: "Intent Compare",
-        url: "/demo/intent",
-        icon: ArrowLeftRight,
-        roles: ["citizen", "officer", "merchant", "admin"],
+        roles: ["citizen", "officer", "merchant", "admin", "superadmin"],
     },
 ];
 

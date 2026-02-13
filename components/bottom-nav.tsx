@@ -45,7 +45,7 @@ const bottomNavItems: BottomNavItem[] = [
         shortLabel: "Pay",
         url: "/pay",
         icon: ScanLine,
-        roles: ["citizen"],
+        roles: ["citizen", "officer", "merchant"],
     },
     {
         label: "My Business",
@@ -66,14 +66,14 @@ const bottomNavItems: BottomNavItem[] = [
         shortLabel: "Admin",
         url: "/admin",
         icon: Building2,
-        roles: ["admin"],
+        roles: ["admin", "superadmin"],
     },
     {
         label: "Settings",
         shortLabel: "Settings",
         url: "/settings",
         icon: Settings,
-        roles: ["citizen", "officer", "merchant", "admin"],
+        roles: ["citizen", "officer", "merchant", "admin", "superadmin"],
     },
 ];
 

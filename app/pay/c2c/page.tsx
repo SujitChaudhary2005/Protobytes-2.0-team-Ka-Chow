@@ -221,7 +221,7 @@ function C2CPayment() {
                 });
 
                 const queuedTxId = `queued_${Date.now()}`;
-                updateBalance(amt);
+                // Only deduct from SaralPay wallet (not main balance)
                 spendFromSaralPay(amt);
                 const offlineTx: any = {
                     id: queuedTxId,

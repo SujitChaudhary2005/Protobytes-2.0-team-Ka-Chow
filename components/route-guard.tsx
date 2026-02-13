@@ -15,6 +15,7 @@ const ROLE_ROUTES: Record<UserRole, string> = {
     officer: "/officer",
     merchant: "/merchant",
     admin: "/admin",
+    superadmin: "/admin",
 };
 
 export function RouteGuard({ allowedRoles, children }: RouteGuardProps) {

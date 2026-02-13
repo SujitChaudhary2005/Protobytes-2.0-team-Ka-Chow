@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { Wallet, Transaction, UserRole, AppUser, MerchantProfile, NIDCard, BankAccount, OfflineWallet, MOCK_NID_DATABASE } from "@/types";
 import { generateKeyPair, keyToHex } from "@/lib/crypto";
 import { SecureKeyStore } from "@/lib/secure-storage";
+import { seedDemoData } from "@/lib/demo-seed";
 
 // ── Per-user storage helper ──
 let _activeUserId: string | null = null;
@@ -36,9 +37,9 @@ export const UPA_TO_USER: Record<string, string> = {
 const DEMO_USERS: AppUser[] = [
     { id: "c1000000-0000-0000-0000-000000000001", email: "citizen@demo.np", name: "Ram Bahadur Thapa", role: "citizen", phone: "+9779841000001", nidNumber: "RAM-KTM-1990-4521", upa_id: "ram@upa.np" },
     { id: "c1000000-0000-0000-0000-000000000005", email: "citizen2@demo.np", name: "Anita Gurung", role: "citizen", phone: "+9779841000005", nidNumber: "ANITA-BRT-1998-5643", upa_id: "anita@upa.np" },
-    { id: "c1000000-0000-0000-0000-000000000002", email: "officer@demo.np", name: "Sita Sharma", role: "officer", phone: "+9779841000002" },
-    { id: "c1000000-0000-0000-0000-000000000003", email: "merchant@demo.np", name: "Hari Prasad Oli", role: "merchant", phone: "+9779841000003" },
-    { id: "c1000000-0000-0000-0000-000000000004", email: "admin@demo.np", name: "Gita Adhikari", role: "admin", phone: "+9779841000004" },
+    { id: "c1000000-0000-0000-0000-000000000002", email: "officer@demo.np", name: "Sita Sharma", role: "officer", phone: "+9779841000002", upa_id: "sita@upa.np" },
+    { id: "c1000000-0000-0000-0000-000000000003", email: "merchant@demo.np", name: "Hari Prasad Oli", role: "merchant", phone: "+9779841000003", upa_id: "hari@upa.np" },
+    { id: "c1000000-0000-0000-0000-000000000004", email: "admin@demo.np", name: "Gita Adhikari", role: "admin", phone: "+9779841000004", upa_id: "gita@upa.np" },
 ];
 
 export { DEMO_USERS };
@@ -83,6 +84,9 @@ interface WalletContextType {
     canSpendOffline: (amount: number) => boolean;
     deductFromBank: (amount: number) => void;
     creditUser: (upaAddress: string, amount: number, tx: Transaction) => void;
+    // Offline payment lifecycle actions
+    creditSaralPay: (amount: number) => void;
+    reverseOfflineTx: (amount: number) => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -112,6 +116,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (typeof window === "undefined") return;
 
         const init = async () => {
+            // Seed demo transactions on first visit so dashboards aren't empty
+            seedDemoData();
+
             // Migrate any old plaintext private keys to secure storage
             await SecureKeyStore.migrateFromLocalStorage();
 
@@ -486,6 +493,37 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }, [offlineWallet, wallet]);
 
     /**
+     * Credit SaralPay wallet — used for receiver side of offline payments
+     * and for reversals (re-crediting sender on expired/rejected tx).
+     * IMPORTANT: This ONLY modifies SaralPay, NEVER the main balance.
+     */
+    const creditSaralPay = useCallback((amount: number) => {
+        if (amount <= 0) return;
+        const newWalletState: OfflineWallet = {
+            ...offlineWallet,
+            balance: offlineWallet.balance + amount,
+        };
+        setOfflineWalletState(newWalletState);
+        localStorage.setItem(uKey("upa_saral_pay"), JSON.stringify(newWalletState));
+    }, [offlineWallet]);
+
+    /**
+     * Reverse an offline transaction — re-credits SaralPay for sender,
+     * used when server rejects or tx expires.
+     * IMPORTANT: Only touches SaralPay, never main balance (fix for double deduction bug).
+     */
+    const reverseOfflineTx = useCallback((amount: number) => {
+        if (amount <= 0) return;
+        // Re-credit SaralPay
+        const newWalletState: OfflineWallet = {
+            ...offlineWallet,
+            balance: offlineWallet.balance + amount,
+        };
+        setOfflineWalletState(newWalletState);
+        localStorage.setItem(uKey("upa_saral_pay"), JSON.stringify(newWalletState));
+    }, [offlineWallet]);
+
+    /**
      * Mock deduct from bank (NID-linked bank payment)
      */
     const deductFromBank = useCallback((amount: number) => {
@@ -579,6 +617,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 canSpendOffline,
                 deductFromBank,
                 creditUser,
+                creditSaralPay,
+                reverseOfflineTx,
             }}
         >
             {children}

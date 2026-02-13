@@ -2,248 +2,275 @@
 
 import { useEffect, useRef } from "react";
 import { useNetwork } from "@/hooks/use-network";
-import { getQueuedTransactions, updateTransactionStatus } from "@/lib/db";
+import {
+    getQueuedTransactions,
+    updateTransactionStatus,
+    getOfflineTxsToSync,
+    updateOfflineTxState,
+    markExpiredOfflineTxs,
+} from "@/lib/db";
 import { updateTransactionStatus as updateLocalTxStatus, getTransactions as getLocalTransactions } from "@/lib/storage";
 import { toast } from "sonner";
-import type { OfflineWallet } from "@/types";
+import type { OfflineWallet, SettlementState } from "@/types";
 
 /**
  * Auto-sync hook — triggers background sync when transitioning from offline → online.
  * Shows toasts with sync progress and results.
- * Also updates wallet context & localStorage to reflect settled status.
- * Resets SaralPay wallet usage after successful sync.
+ *
+ * FIX: Uses deterministic per-client_tx_id settlement from server.
+ * No blanket queued→settled conversion — each tx is handled individually.
  */
-export function useAutoSync() {
+export function useAutoSync(
+    isAuthenticated: boolean,
+    offlineWallet: OfflineWallet,
+    reverseOfflineTx?: (amount: number) => void
+) {
     const { online } = useNetwork();
-    const wasOffline = useRef(false);
-    const syncing = useRef(false);
+    const wasOfflineRef = useRef(false);
+    const isSyncingRef = useRef(false);
 
+    // Track offline→online transition
     useEffect(() => {
         if (!online) {
-            wasOffline.current = true;
-            return;
+            wasOfflineRef.current = true;
         }
-
-        // We just came back online
-        if (wasOffline.current && !syncing.current) {
-            wasOffline.current = false;
-            syncQueued();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [online]);
 
-    // Also listen for SW sync complete events
+    // Main sync effect
     useEffect(() => {
-        const handler = (e: Event) => {
-            const detail = (e as CustomEvent).detail;
-            if (detail?.synced > 0) {
-                toast.success(`${detail.synced} payment${detail.synced > 1 ? "s" : ""} settled via background sync!`);
-                // Update local storage to reflect settled
-                updateLocalQueuedToSettled();
-                // Reset SaralPay wallet initial load tracking (keep remaining balance)
-                resetSaralPayAfterSync();
-            }
-            if (detail?.failed > 0) {
-                toast.error(`${detail.failed} payment${detail.failed > 1 ? "s" : ""} failed to sync`);
+        if (!online || !isAuthenticated) return;
+        if (!wasOfflineRef.current) return;
+        if (isSyncingRef.current) return;
+
+        wasOfflineRef.current = false;
+
+        const doSync = async () => {
+            isSyncingRef.current = true;
+            try {
+                // Step 1: Check for expired offline txs first
+                const expired = await markExpiredOfflineTxs();
+                if (expired.length > 0) {
+                    // Reverse each expired tx locally
+                    for (const tx of expired) {
+                        if (reverseOfflineTx) {
+                            reverseOfflineTx(tx.amount);
+                        }
+                    }
+                    toast.error(`${expired.length} offline transaction(s) expired and were reversed.`);
+                }
+
+                // Step 2: Get queued transactions from Dexie
+                const queued = await getQueuedTransactions();
+
+                // Step 3: Get offline accepted txs that need syncing
+                const offlineTxs = await getOfflineTxsToSync();
+
+                const totalToSync = queued.length + offlineTxs.length;
+                if (totalToSync === 0) {
+                    isSyncingRef.current = false;
+                    return;
+                }
+
+                toast.info(`Syncing ${totalToSync} offline transaction(s)...`);
+
+                // ── Sync queued transactions (legacy Dexie queue) ──
+                if (queued.length > 0) {
+                    await syncQueuedLegacy(queued);
+                }
+
+                // ── Sync offline accepted txs (new settlement model) ──
+                if (offlineTxs.length > 0) {
+                    await syncOfflineAccepted(offlineTxs, reverseOfflineTx);
+                }
+            } catch (error) {
+                console.error("[AutoSync] Sync failed:", error);
+                toast.error("Sync failed — will retry on next reconnect.");
+            } finally {
+                isSyncingRef.current = false;
             }
         };
-        window.addEventListener("upa-sync-complete", handler);
-        return () => window.removeEventListener("upa-sync-complete", handler);
-    }, []);
 
-    const syncQueued = async () => {
-        if (syncing.current) return;
-        syncing.current = true;
+        // Small delay to ensure network is stable
+        const timer = setTimeout(doSync, 1500);
+        return () => clearTimeout(timer);
+    }, [online, isAuthenticated, offlineWallet, reverseOfflineTx]);
+}
 
-        try {
-            const items = await getQueuedTransactions();
-            if (items.length === 0) {
-                syncing.current = false;
-                return;
-            }
+/**
+ * Sync legacy queued transactions (from Dexie transactions table).
+ * These go through the existing /api/transactions/sync endpoint.
+ */
+async function syncQueuedLegacy(
+    queued: Awaited<ReturnType<typeof getQueuedTransactions>>
+) {
+    // Mark as syncing
+    for (const tx of queued) {
+        await updateTransactionStatus(tx.id!, "syncing");
+    }
 
-            // Show dramatic syncing toast
-            const syncToastId = toast.loading(
-                `🔄 Connection restored! Syncing ${items.length} queued payment${items.length > 1 ? "s" : ""}...`,
-                { duration: 10000 }
-            );
+    const payments = queued.map((tx) => ({
+        payload: tx.payload,
+        signature: tx.signature,
+        publicKey: tx.publicKey,
+        timestamp: tx.timestamp,
+        nonce: tx.nonce,
+        client_tx_id: tx.client_tx_id || undefined,
+    }));
 
-            const payments = items.map((item) => ({
-                qrPayload: JSON.parse(item.payload),
-                signature: item.signature,
-                nonce: item.nonce,
-                publicKey: item.publicKey,
-            }));
+    try {
+        const response = await fetch("/api/transactions/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payments }),
+        });
 
-            const res = await fetch("/api/transactions/sync", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ payments }),
-            });
-            const result = await res.json();
+        if (response.ok) {
+            const data = await response.json();
 
-            if (!res.ok) throw new Error(result.error || "Sync failed");
+            if (data.results && Array.isArray(data.results)) {
+                // Deterministic per-item handling
+                let settled = 0;
+                let failed = 0;
+                for (let i = 0; i < data.results.length; i++) {
+                    const result = data.results[i];
+                    const originalTx = queued[i];
+                    if (!originalTx) continue;
 
-            let settled = 0;
-            let failed = 0;
-            let totalAmount = 0;
+                    if (result.status === "settled" || result.status === "success") {
+                        await updateTransactionStatus(originalTx.id!, "settled");
 
-            if (result.results && Array.isArray(result.results)) {
-                for (let i = 0; i < items.length; i++) {
-                    const serverResult = result.results[i];
-                    if (serverResult?.status === "settled") {
-                        await updateTransactionStatus(items[i].id!, "settled");
+                        // Update local storage tx status
+                        const localTxs = getLocalTransactions();
+                        const match = localTxs.find(
+                            (t) =>
+                                t.nonce === originalTx.nonce ||
+                                (originalTx.client_tx_id && t.client_tx_id === originalTx.client_tx_id)
+                        );
+                        if (match) {
+                            updateLocalTxStatus(match.id, "settled");
+                        }
                         settled++;
-                        totalAmount += items[i].amount || 0;
-
-                        // Show individual payment settlement toast with staggered timing
-                        const intent = items[i].intent || "Payment";
-                        const amount = items[i].amount || 0;
-                        setTimeout(() => {
-                            toast.success(
-                                `✅ Settled: NPR ${amount.toLocaleString()} — ${intent}`,
-                                { duration: 4000 }
-                            );
-                        }, settled * 600); // stagger each toast by 600ms
                     } else {
-                        const reason = serverResult?.reason || "unknown_error";
-                        await updateTransactionStatus(items[i].id!, "failed", reason);
+                        await updateTransactionStatus(
+                            originalTx.id!,
+                            "failed",
+                            result.error || "Settlement rejected"
+                        );
                         failed++;
                     }
                 }
+                toast.success(`Synced: ${settled} settled, ${failed} failed`);
+            } else {
+                // Fallback: mark all as settled (old server format)
+                for (const tx of queued) {
+                    await updateTransactionStatus(tx.id!, "settled");
+                }
+                toast.success(`${queued.length} transaction(s) synced`);
             }
-
-            // Update localStorage transactions to reflect new statuses
-            updateLocalQueuedToSettled();
-
-            // Also update the upa_transactions key that the wallet context uses
-            updateWalletContextTransactions(settled > 0);
-
-            // Reset SaralPay wallet tracking after sync (keep remaining balance)
-            if (settled > 0) {
-                resetSaralPayAfterSync();
+        } else {
+            // Server error — keep them queued for retry
+            for (const tx of queued) {
+                await updateTransactionStatus(tx.id!, "queued", "Server error during sync");
             }
-
-            // Dispatch global event so admin dashboard / other pages refresh
-            // (Supabase Realtime will also fire, but this covers localStorage-only mode)
-            if (settled > 0) {
-                window.dispatchEvent(new CustomEvent("upa-transactions-updated"));
-            }
-
-            // Dismiss the loading toast
-            toast.dismiss(syncToastId);
-
-            if (settled > 0) {
-                // Show summary toast after individual ones
-                setTimeout(() => {
-                    toast.success(
-                        `🎉 All ${settled} payment${settled > 1 ? "s" : ""} settled! Total: NPR ${totalAmount.toLocaleString()}`,
-                        { duration: 6000 }
-                    );
-                }, (settled + 1) * 600);
-            }
-            if (failed > 0) {
-                toast.error(`${failed} payment${failed > 1 ? "s" : ""} failed to sync`);
-            }
-        } catch (err: any) {
-            console.error("[AutoSync] Failed:", err);
-            toast.error("Auto-sync failed", { description: err.message });
-        } finally {
-            syncing.current = false;
+            toast.error("Sync failed — server error");
         }
-    };
-
-    return { syncQueued };
+    } catch (error) {
+        // Network error — revert to queued
+        for (const tx of queued) {
+            await updateTransactionStatus(tx.id!, "queued", "Network error");
+        }
+        toast.error("Sync failed — will retry later");
+        throw error;
+    }
 }
 
 /**
- * Update queued→settled in the upa_transactions_db localStorage
+ * Sync offline accepted transactions (new settlement model).
+ * These go through the new /api/transactions/sync endpoint with full proof.
  */
-function updateLocalQueuedToSettled() {
+async function syncOfflineAccepted(
+    offlineTxs: Awaited<ReturnType<typeof getOfflineTxsToSync>>,
+    reverseOfflineTx?: (amount: number) => void
+) {
+    // Mark as sync_pending
+    for (const tx of offlineTxs) {
+        await updateOfflineTxState(tx.client_tx_id, "sync_pending", {
+            sync_attempts: (tx.sync_attempts || 0) + 1,
+        });
+    }
+
+    const payments = offlineTxs.map((tx) => ({
+        client_tx_id: tx.client_tx_id,
+        nonce: tx.nonce,
+        senderUPA: tx.senderUPA,
+        receiverUPA: tx.receiverUPA,
+        amount: tx.amount,
+        intent: tx.intent,
+        acceptedAt: tx.acceptedAt,
+        expiresAt: tx.expiresAt,
+        sender_signature: tx.sender_signature,
+        receiver_signature: tx.receiver_signature,
+        sender_device_id: tx.sender_device_id,
+        receiver_device_id: tx.receiver_device_id,
+        proof: tx.proof,
+        // Construct a payload string for backward compatibility
+        payload: JSON.stringify({
+            recipient: tx.receiverUPA,
+            recipientName: tx.receiverName,
+            amount: tx.amount,
+            intent: tx.intent,
+            fromUPA: tx.senderUPA,
+        }),
+        signature: tx.sender_signature,
+        publicKey: "", // Will be validated via proof
+        timestamp: tx.acceptedAt,
+    }));
+
     try {
-        const txs = getLocalTransactions();
-        let changed = false;
-        for (const tx of txs) {
-            if (tx.status === "queued") {
-                tx.status = "settled";
-                // @ts-ignore
-                tx.mode = "offline"; // Keep mode as offline to show it was synced
-                changed = true;
+        const response = await fetch("/api/transactions/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payments }),
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+
+            if (data.results && Array.isArray(data.results)) {
+                let settled = 0;
+                let rejected = 0;
+                for (const result of data.results) {
+                    const clientId = result.client_tx_id;
+                    if (!clientId) continue;
+
+                    const origTx = offlineTxs.find((t) => t.client_tx_id === clientId);
+                    if (!origTx) continue;
+
+                    if (result.status === "settled" || result.status === "success") {
+                        await updateOfflineTxState(clientId, "settled" as SettlementState, {
+                            syncedAt: Date.now(),
+                        });
+                        settled++;
+                    } else {
+                        const state: SettlementState = result.status === "expired" ? "expired" : "rejected";
+                        await updateOfflineTxState(clientId, state, {
+                            rejection_reason: result.error || result.reason || "Unknown",
+                        });
+                        // Reverse the local ledger
+                        if (reverseOfflineTx) {
+                            reverseOfflineTx(origTx.amount);
+                        }
+                        rejected++;
+                    }
+                }
+                if (settled > 0) toast.success(`${settled} offline tx(s) settled`);
+                if (rejected > 0) toast.error(`${rejected} offline tx(s) rejected/expired`);
             }
+        } else {
+            // Server error — keep as sync_pending for retry
+            toast.error("Sync failed — will retry later");
         }
-        if (changed) {
-            localStorage.setItem("upa_transactions_db", JSON.stringify(txs));
-        }
-    } catch { /* ignore */ }
-}
-
-/**
- * Get the active user ID from session for scoped storage
- */
-function getActiveUserId(): string | null {
-    try {
-        const session = localStorage.getItem("upa_auth_session");
-        if (session) {
-            const s = JSON.parse(session);
-            return s.user?.id ?? null;
-        }
-    } catch { /* ignore */ }
-    return null;
-}
-
-/**
- * Update queued→settled in the upa_transactions key (wallet context)
- */
-function updateWalletContextTransactions(hasSettled: boolean) {
-    if (!hasSettled) return;
-    try {
-        const uid = getActiveUserId();
-        const key = uid ? `upa_transactions:${uid}` : "upa_transactions";
-        const stored = localStorage.getItem(key);
-        if (!stored) return;
-        const txs = JSON.parse(stored);
-        let changed = false;
-        for (const tx of txs) {
-            if (tx.status === "queued") {
-                tx.status = "settled";
-                tx.settledAt = Date.now();
-                // Keep mode as "offline" so it shows the sync badge
-                changed = true;
-            }
-        }
-        if (changed) {
-            localStorage.setItem(key, JSON.stringify(txs));
-            // Dispatch event so the home page knows to refresh
-            window.dispatchEvent(new CustomEvent("upa-transactions-updated"));
-        }
-    } catch { /* ignore */ }
-}
-
-/**
- * After sync, reset SaralPay wallet tracking.
- * Keeps the remaining balance but resets the initialLoadAmount to match current balance,
- * so the progress bar resets. If balance is zero, deactivates the wallet.
- */
-function resetSaralPayAfterSync() {
-    try {
-        const uid = getActiveUserId();
-        const key = uid ? `upa_saral_pay:${uid}` : "upa_saral_pay";
-        const stored = localStorage.getItem(key);
-        if (!stored) return;
-        const wallet: OfflineWallet = JSON.parse(stored);
-        if (!wallet.loaded) return;
-
-        const updated: OfflineWallet = {
-            ...wallet,
-            // Reset initial load to current balance so progress bar resets
-            initialLoadAmount: wallet.balance,
-            lastReset: Date.now(),
-            // If balance is zero, deactivate the wallet
-            loaded: wallet.balance > 0,
-        };
-        localStorage.setItem(key, JSON.stringify(updated));
-
-        // Dispatch event so wallet context picks up the change
-        window.dispatchEvent(new CustomEvent("upa-saralpay-synced", { detail: updated }));
-    } catch { /* ignore */ }
+    } catch {
+        toast.error("Sync failed — network error");
+    }
 }

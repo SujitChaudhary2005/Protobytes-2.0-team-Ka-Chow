@@ -229,7 +229,7 @@ function BillPayment() {
                 const queuedTxId = `queued_${Date.now()}`;
                 setTxId(queuedTxId);
 
-                updateBalance(amt);
+                // Only deduct from SaralPay wallet (not main balance)
                 spendFromSaralPay(amt);
                 addTransaction({
                     id: queuedTxId,

@@ -22,6 +22,12 @@ import {
     generateKeyPair,
 } from "@/lib/crypto";
 import { SecureKeyStore } from "@/lib/secure-storage";
+import {
+    validateOfflinePayment,
+    getExpiryTimestamp,
+} from "@/lib/offline-policy";
+import { saveOfflineAcceptedTx, getDailyOfflineSpend } from "@/lib/db";
+import type { OfflineAcceptedTx, SettlementState } from "@/types";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -312,5 +318,116 @@ export function isPaymentReceipt(
     payload: SignedPaymentRequest | SignedPaymentReceipt
 ): payload is SignedPaymentReceipt {
     return payload.phase === "receipt";
+}
+
+// ── Complete Offline Payment (Lite X style local acceptance) ──────
+
+export interface OfflinePaymentResult {
+    success: boolean;
+    error?: string;
+    client_tx_id?: string;
+    acceptedTx?: OfflineAcceptedTx;
+}
+
+/**
+ * Complete an offline payment after the QR handshake.
+ *
+ * This function:
+ * 1. Validates all policy limits (per-tx, daily, wallet balance)
+ * 2. Generates a stable client_tx_id (UUID)
+ * 3. Records mirrored local entries for sender (debit) and receiver (credit)
+ * 4. Sets settlement_state to "accepted_offline"
+ *
+ * The caller is responsible for:
+ * - Deducting from sender's SaralPay wallet (spendFromSaralPay)
+ * - Crediting receiver's SaralPay wallet (creditSaralPay) 
+ * - Adding the tx to the local transaction list
+ *
+ * CRITICAL: This uses SaralPay only — never the main balance.
+ */
+export async function completeOfflinePayment(params: {
+    senderUPA: string;
+    senderName: string;
+    receiverUPA: string;
+    receiverName: string;
+    amount: number;
+    intent: string;
+    senderSignature: string;
+    receiverSignature: string;
+    senderDeviceId: string;
+    receiverDeviceId: string;
+    proof: Record<string, unknown>;
+    walletBalance: number;
+}): Promise<OfflinePaymentResult> {
+    const {
+        senderUPA,
+        senderName,
+        receiverUPA,
+        receiverName,
+        amount,
+        intent,
+        senderSignature,
+        receiverSignature,
+        senderDeviceId,
+        receiverDeviceId,
+        proof,
+        walletBalance,
+    } = params;
+
+    // ── 1. Get daily spend ──
+    const todaySpent = await getDailyOfflineSpend(senderUPA);
+
+    // ── 2. Validate policy limits ──
+    const check = validateOfflinePayment({
+        amount,
+        walletBalance,
+        todaySpent,
+    });
+
+    if (!check.allowed) {
+        return { success: false, error: check.reason };
+    }
+
+    // ── 3. Generate stable client_tx_id ──
+    const client_tx_id = crypto.randomUUID();
+    const now = Date.now();
+    const expiresAt = getExpiryTimestamp(now);
+
+    // ── 4. Build the offline accepted tx record ──
+    const acceptedTx: Omit<OfflineAcceptedTx, "id"> = {
+        client_tx_id,
+        nonce: generateNonce(),
+        senderUPA,
+        senderName,
+        receiverUPA,
+        receiverName,
+        amount,
+        intent,
+        acceptedAt: now,
+        expiresAt,
+        settlement_state: "accepted_offline" as SettlementState,
+        sender_signature: senderSignature,
+        receiver_signature: receiverSignature,
+        sender_device_id: senderDeviceId,
+        receiver_device_id: receiverDeviceId,
+        proof,
+        sync_attempts: 0,
+    };
+
+    // ── 5. Save to IndexedDB ──
+    try {
+        await saveOfflineAcceptedTx(acceptedTx);
+    } catch (err) {
+        return {
+            success: false,
+            error: `Failed to save offline tx: ${err instanceof Error ? err.message : "Unknown error"}`,
+        };
+    }
+
+    return {
+        success: true,
+        client_tx_id,
+        acceptedTx: { ...acceptedTx, id: 0 } as OfflineAcceptedTx,
+    };
 }
 

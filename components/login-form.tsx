@@ -17,6 +17,7 @@ const ROLE_ROUTES: Record<UserRole, string> = {
     officer: "/officer",
     merchant: "/merchant",
     admin: "/admin",
+    superadmin: "/admin",
 };
 
 export function LoginForm({ className, ...props }: React.ComponentProps<"div">) {
@@ -100,11 +101,11 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
 
                             <div className="grid grid-cols-2 gap-2 text-xs">
                                 {[
-                                    { label: "Citizen", email: "citizen@demo.np", pass: "citizen123" },
-                                    { label: "Citizen 2", email: "citizen2@demo.np", pass: "citizen123" },
-                                    { label: "Gov Officer", email: "officer@demo.np", pass: "officer123" },
-                                    { label: "Merchant", email: "merchant@demo.np", pass: "merchant123" },
-                                    { label: "Gov Admin", email: "admin@demo.np", pass: "admin123" },
+                                    { label: "Ram Bahadur Thapa", email: "citizen@demo.np", pass: "citizen123" },
+                                    { label: "Anita Gurung", email: "citizen2@demo.np", pass: "citizen123" },
+                                    { label: "Sita Sharma", email: "officer@demo.np", pass: "officer123" },
+                                    { label: "Hari Prasad Oli", email: "merchant@demo.np", pass: "merchant123" },
+                                    { label: "Gita Adhikari", email: "admin@demo.np", pass: "admin123" },
                                 ].map((demo) => (
                                     <button
                                         key={demo.email}
@@ -125,7 +126,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
                     <div className="relative hidden bg-muted md:block">
                         <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
                             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground mb-4">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" /></svg>
                             </div>
                             <h2 className="text-xl font-bold mb-2">UPA Pay</h2>
                             <p className="text-sm text-muted-foreground max-w-[250px]">

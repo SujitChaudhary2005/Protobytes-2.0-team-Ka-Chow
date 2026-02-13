@@ -32,6 +32,7 @@ import { useNetwork } from "@/hooks/use-network";
 import { RouteGuard } from "@/components/route-guard";
 import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { queueTransaction } from "@/lib/db";
+import { executeACIDTransaction, executeMerchantACIDTransaction } from "@/lib/acid-transaction";
 import { createSignalChannel } from "@/lib/nfc-signal";
 import { MerchantOfflineCharge } from "@/components/cross-device-offline";
 import { QRCodeDisplay } from "@/components/qr-code";
@@ -240,11 +241,6 @@ function MerchantNFCTerminal() {
         saveLocalTransaction(txRecord);
         addTransaction(txRecord);
 
-        // Log
-        setTxLog((prev) => [{ id: txId, type: isOffline ? "C2B (offline)" : "C2B (received)", amount, counterparty: data.customerName || "Customer", time: Date.now() }, ...prev]);
-        setLastTxId(txId);
-        setLastTxType(isOffline ? "C2B (Offline)" : "C2B");
-
         // Persist via API — only when online (best-effort)
         if (!isOffline) {
             fetch("/api/transactions/settle", {
@@ -262,8 +258,8 @@ function MerchantNFCTerminal() {
                 }),
             }).catch(() => { /* best-effort */ });
         } else {
-            // Queue for background sync
-            queueTransaction({
+            // ACID-guaranteed offline queueing
+            const queuePayload = {
                 payload: JSON.stringify({
                     version: "1.0", upa: businessUPA,
                     intent: { id: "nfc_purchase", category: "purchase", label: "NFC Payment Received" },
@@ -281,8 +277,22 @@ function MerchantNFCTerminal() {
                 amount,
                 intent: "NFC Payment Received",
                 metadata: txRecord.metadata,
-            }).catch(() => { /* best-effort */ });
+            };
+
+            executeMerchantACIDTransaction(
+                { transaction: txRecord, queuePayload },
+                { addTransaction }
+            ).then(result => {
+                if (!result.success) {
+                    console.error(`[ACID] Merchant NFC TX failed: ${result.error}`);
+                }
+            });
         }
+
+        // Log
+        setTxLog((prev) => [{ id: txId, type: isOffline ? "C2B (offline)" : "C2B (received)", amount, counterparty: data.customerName || "Customer", time: Date.now() }, ...prev]);
+        setLastTxId(txId);
+        setLastTxType(isOffline ? "C2B (Offline)" : "C2B");
 
         if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 100]);
         if (isOffline) {
@@ -339,12 +349,50 @@ function MerchantNFCTerminal() {
             walletProvider: "upa_pay", payment_source: "wallet" as const,
         };
 
-        saveLocalTransaction(txRecord);
-        updateBalance(amount);
-        addTransaction(txRecord);
+        if (isOffline) {
+            // ACID-guaranteed offline B2C payment
+            const queuePayload = {
+                payload: JSON.stringify({
+                    version: "1.0", upa: customer.upa || customer.name,
+                    intent: { id: "b2c_payment", category: "transfer", label: `B2C Payment to ${customer.name}` },
+                    tx_type: "b2c", amount, currency: "NPR", metadata: txRecord.metadata,
+                    payer_name: businessName, payer_id: businessUPA,
+                    issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
+                    nonce, type: "offline",
+                }),
+                signature: "offline-b2c-" + txId,
+                publicKey: "",
+                timestamp: Date.now(),
+                nonce,
+                recipient: customer.upa || customer.name,
+                amount,
+                intent: `B2C Payment to ${customer.name}`,
+                metadata: txRecord.metadata,
+            };
 
-        // Deduct from SaralPay wallet if offline
-        if (isOffline) spendFromSaralPay(amount);
+            const acidResult = await executeACIDTransaction(
+                {
+                    transaction: txRecord,
+                    queuePayload,
+                    deductAmount: amount,
+                    currentBalance: balance,
+                    offlineBalance: saralPayBalance,
+                    consumesOfflineWallet: true,
+                },
+                { addTransaction, updateBalance, spendFromSaralPay }
+            );
+
+            if (!acidResult.success) {
+                setStatus("ready");
+                toast.error(`B2C payment failed: ${acidResult.error}`);
+                return;
+            }
+        } else {
+            // Online: direct writes
+            saveLocalTransaction(txRecord);
+            updateBalance(amount);
+            addTransaction(txRecord);
+        }
 
         // Notify citizen via signal channel (BroadcastChannel works offline for same-device!)
         channelRef.current?.send({
@@ -376,26 +424,6 @@ function MerchantNFCTerminal() {
                         nonce, type: "online",
                     },
                 }),
-            }).catch(() => { /* best-effort */ });
-        } else {
-            // Queue for background sync
-            queueTransaction({
-                payload: JSON.stringify({
-                    version: "1.0", upa: customer.upa || customer.name,
-                    intent: { id: "b2c_payment", category: "transfer", label: `B2C Payment to ${customer.name}` },
-                    tx_type: "b2c", amount, currency: "NPR", metadata: txRecord.metadata,
-                    payer_name: businessName, payer_id: businessUPA,
-                    issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
-                    nonce, type: "offline",
-                }),
-                signature: "offline-b2c-" + txId,
-                publicKey: "",
-                timestamp: Date.now(),
-                nonce,
-                recipient: customer.upa || customer.name,
-                amount,
-                intent: `B2C Payment to ${customer.name}`,
-                metadata: txRecord.metadata,
             }).catch(() => { /* best-effort */ });
         }
 
@@ -455,12 +483,50 @@ function MerchantNFCTerminal() {
             walletProvider: "upa_pay", payment_source: "wallet" as const,
         };
 
-        saveLocalTransaction(txRecord);
-        updateBalance(amount);
-        addTransaction(txRecord);
+        if (isOffline) {
+            // ACID-guaranteed offline B2G payment
+            const queuePayload = {
+                payload: JSON.stringify({
+                    version: "1.0", upa: gov.upa,
+                    intent: { id: `b2g_${gov.category}`, category: gov.category, label: `B2G Payment — ${gov.name}` },
+                    tx_type: "b2g", amount, currency: "NPR", metadata: txRecord.metadata,
+                    payer_name: businessName, payer_id: businessUPA,
+                    issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
+                    nonce, type: "offline",
+                }),
+                signature: "offline-b2g-" + txId,
+                publicKey: "",
+                timestamp: Date.now(),
+                nonce,
+                recipient: gov.upa,
+                amount,
+                intent: `B2G Payment — ${gov.name}`,
+                metadata: txRecord.metadata,
+            };
 
-        // Deduct from SaralPay wallet if offline
-        if (isOffline) spendFromSaralPay(amount);
+            const acidResult = await executeACIDTransaction(
+                {
+                    transaction: txRecord,
+                    queuePayload,
+                    deductAmount: amount,
+                    currentBalance: balance,
+                    offlineBalance: saralPayBalance,
+                    consumesOfflineWallet: true,
+                },
+                { addTransaction, updateBalance, spendFromSaralPay }
+            );
+
+            if (!acidResult.success) {
+                setStatus("ready");
+                toast.error(`B2G payment failed: ${acidResult.error}`);
+                return;
+            }
+        } else {
+            // Online: direct writes
+            saveLocalTransaction(txRecord);
+            updateBalance(amount);
+            addTransaction(txRecord);
+        }
 
         // Log
         setTxLog((prev) => [{ id: txId, type: isOffline ? "B2G (offline)" : "B2G (sent)", amount, counterparty: gov.name, time: Date.now() }, ...prev]);
@@ -481,26 +547,6 @@ function MerchantNFCTerminal() {
                         nonce, type: "online",
                     },
                 }),
-            }).catch(() => { /* best-effort */ });
-        } else {
-            // Queue for background sync
-            queueTransaction({
-                payload: JSON.stringify({
-                    version: "1.0", upa: gov.upa,
-                    intent: { id: `b2g_${gov.category}`, category: gov.category, label: `B2G Payment — ${gov.name}` },
-                    tx_type: "b2g", amount, currency: "NPR", metadata: txRecord.metadata,
-                    payer_name: businessName, payer_id: businessUPA,
-                    issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
-                    nonce, type: "offline",
-                }),
-                signature: "offline-b2g-" + txId,
-                publicKey: "",
-                timestamp: Date.now(),
-                nonce,
-                recipient: gov.upa,
-                amount,
-                intent: `B2G Payment — ${gov.name}`,
-                metadata: txRecord.metadata,
             }).catch(() => { /* best-effort */ });
         }
 
@@ -667,296 +713,295 @@ function MerchantNFCTerminal() {
             {txMode === "xdevice" ? (
                 <MerchantOfflineCharge businessName={businessName || merchantProfile?.businessName || "My Business"} businessUPA={businessUPA} />
             ) : (
-            <>
-            {/* Business Setup */}
-            <Card>
-                <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                        <Building2 className="h-4 w-4" /> Terminal — {modeLabels[txMode]}
-                    </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Business Name</label>
-                        <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Your business name" />
-                    </div>
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Amount (NPR)</label>
-                        <Input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder="Enter amount" />
-                    </div>
-                    {hasNativeNFC && txMode === "charge" && (
-                        <Button variant="outline" size="sm" className="w-full" onClick={writeNFCTag}>
-                            <CreditCard className="h-4 w-4 mr-2" /> Write to NFC Tag
-                        </Button>
+                <>
+                    {/* Business Setup */}
+                    <Card>
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-sm flex items-center gap-2">
+                                <Building2 className="h-4 w-4" /> Terminal — {modeLabels[txMode]}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                            <div>
+                                <label className="text-xs text-muted-foreground mb-1 block">Business Name</label>
+                                <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Your business name" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-muted-foreground mb-1 block">Amount (NPR)</label>
+                                <Input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder="Enter amount" />
+                            </div>
+                            {hasNativeNFC && txMode === "charge" && (
+                                <Button variant="outline" size="sm" className="w-full" onClick={writeNFCTag}>
+                                    <CreditCard className="h-4 w-4 mr-2" /> Write to NFC Tag
+                                </Button>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* QR Code Display for Charge Mode */}
+                    {txMode === "charge" && paymentAmount && Number(paymentAmount) > 0 && (
+                        <Card className="border-primary/20">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-sm flex items-center gap-2">
+                                    <QrCode className="h-4 w-4 text-primary" />
+                                    Payment QR Code
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                                <p className="text-xs text-muted-foreground text-center">
+                                    Customer can scan this QR code to pay {formatCurrency(Number(paymentAmount))}
+                                </p>
+                                <div className="flex justify-center bg-white rounded-lg p-4 border">
+                                    <QRCodeDisplay
+                                        value={JSON.stringify({
+                                            version: "1.0",
+                                            type: "merchant_charge",
+                                            merchantName: businessName,
+                                            merchantUPA: businessUPA,
+                                            amount: Number(paymentAmount),
+                                            currency: "NPR",
+                                            timestamp: Date.now(),
+                                        })}
+                                        size={200}
+                                    />
+                                </div>
+                                <p className="text-xs text-muted-foreground text-center">
+                                    Works offline — customer scans with /pay?mode=qr
+                                </p>
+                            </CardContent>
+                        </Card>
                     )}
-                </CardContent>
-            </Card>
 
-            {/* QR Code Display for Charge Mode */}
-            {txMode === "charge" && paymentAmount && Number(paymentAmount) > 0 && (
-                <Card className="border-primary/20">
-                    <CardHeader className="pb-3">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                            <QrCode className="h-4 w-4 text-primary" />
-                            Payment QR Code
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                        <p className="text-xs text-muted-foreground text-center">
-                            Customer can scan this QR code to pay {formatCurrency(Number(paymentAmount))}
-                        </p>
-                        <div className="flex justify-center bg-white rounded-lg p-4 border">
-                            <QRCodeDisplay
-                                value={JSON.stringify({
-                                    version: "1.0",
-                                    type: "merchant_charge",
-                                    merchantName: businessName,
-                                    merchantUPA: businessUPA,
-                                    amount: Number(paymentAmount),
-                                    currency: "NPR",
-                                    timestamp: Date.now(),
-                                })}
-                                size={200}
-                            />
-                        </div>
-                        <p className="text-xs text-muted-foreground text-center">
-                            Works offline — customer scans with /pay?mode=qr
-                        </p>
-                    </CardContent>
-                </Card>
-            )}
+                    {/* Daily Stats */}
+                    <Card>
+                        <CardContent className="p-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <p className="text-xs text-muted-foreground">Today&apos;s Revenue</p>
+                                    <p className="text-xl font-bold text-green-600">{formatCurrency(dailyTotal)}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-muted-foreground">Transactions</p>
+                                    <p className="text-xl font-bold">{todaysTransactions}</p>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
 
-            {/* Daily Stats */}
-            <Card>
-                <CardContent className="p-4">
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <p className="text-xs text-muted-foreground">Today&apos;s Revenue</p>
-                            <p className="text-xl font-bold text-green-600">{formatCurrency(dailyTotal)}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-muted-foreground">Transactions</p>
-                            <p className="text-xl font-bold">{todaysTransactions}</p>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* ─── Detection / Action Area ─── */}
-            <Card className={`transition-all duration-500 ${
-                status === "detecting" ? "border-blue-400 bg-blue-50"
-                : status === "processing" ? "border-amber-400 bg-amber-50"
-                : status === "success" ? "border-green-400 bg-green-50"
-                : "border-dashed"
-            }`}>
-                <CardContent className="p-6 text-center">
-                    {/* --- CHARGE MODE (C2B) --- */}
-                    {txMode === "charge" && (
-                        <>
-                            {status === "ready" && (
+                    {/* ─── Detection / Action Area ─── */}
+                    <Card className={`transition-all duration-500 ${status === "detecting" ? "border-blue-400 bg-blue-50"
+                        : status === "processing" ? "border-amber-400 bg-amber-50"
+                            : status === "success" ? "border-green-400 bg-green-50"
+                                : "border-dashed"
+                        }`}>
+                        <CardContent className="p-6 text-center">
+                            {/* --- CHARGE MODE (C2B) --- */}
+                            {txMode === "charge" && (
                                 <>
-                                    <div className="mx-auto w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                                        <Phone className="h-10 w-10 text-gray-400" />
-                                    </div>
-                                    <h3 className="text-lg font-semibold mb-2">Waiting for Customers</h3>
-                                    <p className="text-sm text-muted-foreground">
-                                        Customers on <code>/pay?mode=nfc</code> (any device) will appear here
-                                    </p>
+                                    {status === "ready" && (
+                                        <>
+                                            <div className="mx-auto w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                                                <Phone className="h-10 w-10 text-gray-400" />
+                                            </div>
+                                            <h3 className="text-lg font-semibold mb-2">Waiting for Customers</h3>
+                                            <p className="text-sm text-muted-foreground">
+                                                Customers on <code>/pay?mode=nfc</code> (any device) will appear here
+                                            </p>
+                                        </>
+                                    )}
+
+                                    {status === "detecting" && nearbyCustomers.length > 0 && (
+                                        <>
+                                            <div className="mx-auto w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mb-4 animate-pulse">
+                                                <Users className="h-10 w-10 text-blue-600" />
+                                            </div>
+                                            <h3 className="text-lg font-semibold mb-3 text-blue-700">
+                                                {nearbyCustomers.length} Customer{nearbyCustomers.length > 1 ? "s" : ""} Nearby
+                                            </h3>
+                                            <div className="space-y-2">
+                                                {nearbyCustomers.map((customer) => (
+                                                    <div key={customer.id} className="flex items-center justify-between bg-white rounded-lg p-3 border">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center">
+                                                                <span className="text-xs font-bold text-blue-600">{customer.name.charAt(0)}</span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-sm font-medium">{customer.name}</span>
+                                                                {customer.upa && <p className="text-[10px] text-muted-foreground">{customer.upa}</p>}
+                                                            </div>
+                                                        </div>
+                                                        <Button size="sm" onClick={() => requestPayment(customer.id)}
+                                                            disabled={!paymentAmount || Number(paymentAmount) <= 0}
+                                                            className="bg-blue-600 hover:bg-blue-700">
+                                                            Charge {paymentAmount ? formatCurrency(Number(paymentAmount)) : "—"}
+                                                        </Button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </>
+                                    )}
                                 </>
                             )}
 
-                            {status === "detecting" && nearbyCustomers.length > 0 && (
+                            {/* --- B2C MODE --- */}
+                            {txMode === "b2c" && (
                                 <>
-                                    <div className="mx-auto w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mb-4 animate-pulse">
-                                        <Users className="h-10 w-10 text-blue-600" />
-                                    </div>
-                                    <h3 className="text-lg font-semibold mb-3 text-blue-700">
-                                        {nearbyCustomers.length} Customer{nearbyCustomers.length > 1 ? "s" : ""} Nearby
-                                    </h3>
-                                    <div className="space-y-2">
-                                        {nearbyCustomers.map((customer) => (
-                                            <div key={customer.id} className="flex items-center justify-between bg-white rounded-lg p-3 border">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                                        <span className="text-xs font-bold text-blue-600">{customer.name.charAt(0)}</span>
+                                    {(status === "ready" || status === "detecting") && nearbyCustomers.length === 0 && (
+                                        <>
+                                            <div className="mx-auto w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mb-4">
+                                                <Send className="h-10 w-10 text-purple-400" />
+                                            </div>
+                                            <h3 className="text-lg font-semibold mb-2">B2C — Send to Customer</h3>
+                                            <p className="text-sm text-muted-foreground">
+                                                Customers on <code>/pay?mode=nfc</code> (any device) will appear here for refunds/payouts
+                                            </p>
+                                        </>
+                                    )}
+
+                                    {nearbyCustomers.length > 0 && (status === "ready" || status === "detecting") && (
+                                        <>
+                                            <div className="mx-auto w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mb-4 animate-pulse">
+                                                <Send className="h-10 w-10 text-purple-600" />
+                                            </div>
+                                            <h3 className="text-lg font-semibold mb-3 text-purple-700">Send to Customer (B2C)</h3>
+                                            <div className="space-y-2">
+                                                {nearbyCustomers.map((customer) => (
+                                                    <div key={customer.id} className="flex items-center justify-between bg-white rounded-lg p-3 border">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="h-8 w-8 bg-purple-100 rounded-full flex items-center justify-center">
+                                                                <span className="text-xs font-bold text-purple-600">{customer.name.charAt(0)}</span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-sm font-medium">{customer.name}</span>
+                                                                {customer.upa && <p className="text-[10px] text-muted-foreground">{customer.upa}</p>}
+                                                            </div>
+                                                        </div>
+                                                        <Button size="sm" onClick={() => sendToCustomer(customer)}
+                                                            disabled={!paymentAmount || Number(paymentAmount) <= 0}
+                                                            className="bg-purple-600 hover:bg-purple-700">
+                                                            Send {paymentAmount ? formatCurrency(Number(paymentAmount)) : "—"}
+                                                        </Button>
                                                     </div>
+                                                ))}
+                                            </div>
+                                        </>
+                                    )}
+                                </>
+                            )}
+
+                            {/* --- B2G MODE --- */}
+                            {txMode === "b2g" && (status === "ready" || status === "detecting") && (
+                                <>
+                                    <div className="mx-auto w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mb-4">
+                                        <Landmark className="h-10 w-10 text-red-600" />
+                                    </div>
+                                    <h3 className="text-lg font-semibold mb-3 text-red-700">Pay Government (B2G)</h3>
+                                    <div className="space-y-2 text-left">
+                                        {GOV_ENTITIES.map((gov) => (
+                                            <div key={gov.id} className="flex items-center justify-between bg-white rounded-lg p-3 border">
+                                                <div className="flex items-center gap-2">
+                                                    <Landmark className="h-4 w-4 text-red-600" />
                                                     <div>
-                                                        <span className="text-sm font-medium">{customer.name}</span>
-                                                        {customer.upa && <p className="text-[10px] text-muted-foreground">{customer.upa}</p>}
+                                                        <span className="text-sm font-medium">{gov.name}</span>
+                                                        <p className="text-[10px] text-muted-foreground">{gov.upa}</p>
                                                     </div>
                                                 </div>
-                                                <Button size="sm" onClick={() => requestPayment(customer.id)}
+                                                <Button size="sm" onClick={() => payGovernment(gov)}
                                                     disabled={!paymentAmount || Number(paymentAmount) <= 0}
-                                                    className="bg-blue-600 hover:bg-blue-700">
-                                                    Charge {paymentAmount ? formatCurrency(Number(paymentAmount)) : "—"}
+                                                    className="bg-red-600 hover:bg-red-700 text-xs">
+                                                    Pay {paymentAmount ? formatCurrency(Number(paymentAmount)) : "—"}
                                                 </Button>
                                             </div>
                                         ))}
                                     </div>
                                 </>
                             )}
-                        </>
-                    )}
 
-                    {/* --- B2C MODE --- */}
-                    {txMode === "b2c" && (
-                        <>
-                            {(status === "ready" || status === "detecting") && nearbyCustomers.length === 0 && (
+                            {/* Processing (all modes) */}
+                            {status === "processing" && (
                                 <>
-                                    <div className="mx-auto w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mb-4">
-                                        <Send className="h-10 w-10 text-purple-400" />
+                                    <div className="mx-auto w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mb-4">
+                                        <RefreshCw className="h-10 w-10 text-amber-600 animate-spin" />
                                     </div>
-                                    <h3 className="text-lg font-semibold mb-2">B2C — Send to Customer</h3>
-                                    <p className="text-sm text-muted-foreground">
-                                        Customers on <code>/pay?mode=nfc</code> (any device) will appear here for refunds/payouts
+                                    <h3 className="text-lg font-semibold text-amber-700 mb-1">Processing...</h3>
+                                    <p className="text-sm text-amber-600">
+                                        {txMode === "charge" ? "Waiting for customer approval" : "Settling payment..."}
                                     </p>
                                 </>
                             )}
 
-                            {nearbyCustomers.length > 0 && (status === "ready" || status === "detecting") && (
+                            {/* Success (all modes) */}
+                            {status === "success" && (
                                 <>
-                                    <div className="mx-auto w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mb-4 animate-pulse">
-                                        <Send className="h-10 w-10 text-purple-600" />
-                                    </div>
-                                    <h3 className="text-lg font-semibold mb-3 text-purple-700">Send to Customer (B2C)</h3>
-                                    <div className="space-y-2">
-                                        {nearbyCustomers.map((customer) => (
-                                            <div key={customer.id} className="flex items-center justify-between bg-white rounded-lg p-3 border">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="h-8 w-8 bg-purple-100 rounded-full flex items-center justify-center">
-                                                        <span className="text-xs font-bold text-purple-600">{customer.name.charAt(0)}</span>
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-sm font-medium">{customer.name}</span>
-                                                        {customer.upa && <p className="text-[10px] text-muted-foreground">{customer.upa}</p>}
-                                                    </div>
-                                                </div>
-                                                <Button size="sm" onClick={() => sendToCustomer(customer)}
-                                                    disabled={!paymentAmount || Number(paymentAmount) <= 0}
-                                                    className="bg-purple-600 hover:bg-purple-700">
-                                                    Send {paymentAmount ? formatCurrency(Number(paymentAmount)) : "—"}
-                                                </Button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </>
-                            )}
-                        </>
-                    )}
-
-                    {/* --- B2G MODE --- */}
-                    {txMode === "b2g" && (status === "ready" || status === "detecting") && (
-                        <>
-                            <div className="mx-auto w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mb-4">
-                                <Landmark className="h-10 w-10 text-red-600" />
-                            </div>
-                            <h3 className="text-lg font-semibold mb-3 text-red-700">Pay Government (B2G)</h3>
-                            <div className="space-y-2 text-left">
-                                {GOV_ENTITIES.map((gov) => (
-                                    <div key={gov.id} className="flex items-center justify-between bg-white rounded-lg p-3 border">
-                                        <div className="flex items-center gap-2">
-                                            <Landmark className="h-4 w-4 text-red-600" />
-                                            <div>
-                                                <span className="text-sm font-medium">{gov.name}</span>
-                                                <p className="text-[10px] text-muted-foreground">{gov.upa}</p>
-                                            </div>
-                                        </div>
-                                        <Button size="sm" onClick={() => payGovernment(gov)}
-                                            disabled={!paymentAmount || Number(paymentAmount) <= 0}
-                                            className="bg-red-600 hover:bg-red-700 text-xs">
-                                            Pay {paymentAmount ? formatCurrency(Number(paymentAmount)) : "—"}
-                                        </Button>
-                                    </div>
-                                ))}
-                            </div>
-                        </>
-                    )}
-
-                    {/* Processing (all modes) */}
-                    {status === "processing" && (
-                        <>
-                            <div className="mx-auto w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mb-4">
-                                <RefreshCw className="h-10 w-10 text-amber-600 animate-spin" />
-                            </div>
-                            <h3 className="text-lg font-semibold text-amber-700 mb-1">Processing...</h3>
-                            <p className="text-sm text-amber-600">
-                                {txMode === "charge" ? "Waiting for customer approval" : "Settling payment..."}
-                            </p>
-                        </>
-                    )}
-
-                    {/* Success (all modes) */}
-                    {status === "success" && (
-                        <>
-                            <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${!online ? "bg-amber-100" : "bg-green-100"}`}>
-                                {!online ? (
-                                    <CloudOff className="h-10 w-10 text-amber-600" />
-                                ) : (
-                                    <CheckCircle2 className="h-10 w-10 text-green-600" />
-                                )}
-                            </div>
-                            <h3 className={`text-lg font-semibold mb-1 ${!online ? "text-amber-700" : "text-green-700"}`}>
-                                {!online
-                                    ? (txMode === "charge" ? "Payment Queued!" : txMode === "b2c" ? "Transfer Queued!" : "Payment Queued!")
-                                    : (txMode === "charge" ? "Payment Received!" : txMode === "b2c" ? "Money Sent!" : "Tax/Fee Paid!")
-                                }
-                            </h3>
-                            {lastTxId && (
-                                <div className="my-2 bg-white rounded-lg border p-2 text-left space-y-1 mx-auto max-w-xs">
-                                    <div className="flex justify-between text-xs">
-                                        <span className="text-muted-foreground">TX:</span>
-                                        <span className="font-mono text-[10px]">{lastTxId}</span>
-                                    </div>
-                                    <div className="flex justify-between text-xs">
-                                        <span className="text-muted-foreground">Type:</span>
-                                        <Badge variant="outline" className="text-[10px]">{lastTxType}</Badge>
-                                    </div>
-                                    <div className="flex justify-between text-xs">
-                                        <span className="text-muted-foreground">Status:</span>
+                                    <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${!online ? "bg-amber-100" : "bg-green-100"}`}>
                                         {!online ? (
-                                            <Badge className="bg-amber-100 text-amber-700 text-[10px]">Queued (Offline)</Badge>
+                                            <CloudOff className="h-10 w-10 text-amber-600" />
                                         ) : (
-                                            <Badge className="bg-green-100 text-green-700 text-[10px]">Settled</Badge>
+                                            <CheckCircle2 className="h-10 w-10 text-green-600" />
                                         )}
                                     </div>
-                                </div>
-                            )}
-                            <p className={`text-sm ${!online ? "text-amber-600" : "text-green-600"}`}>
-                                {!online ? "Will auto-sync when back online ⏳" : "Transaction settled ✓"}
-                            </p>
-                        </>
-                    )}
-                </CardContent>
-            </Card>
-
-            {/* Transaction Log */}
-            {txLog.length > 0 && (
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">NFC Transaction Log</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                        {txLog.slice(0, 10).map((tx) => (
-                            <div key={tx.id} className="flex items-center justify-between bg-muted/30 rounded-lg p-2 border text-xs">
-                                <div>
-                                    <span className="font-mono text-[10px]">{tx.id}</span>
-                                    <p className="text-muted-foreground">{tx.counterparty}</p>
-                                </div>
-                                <div className="text-right">
-                                    <Badge variant={tx.type.includes("received") || tx.type.includes("C2B") ? "default" : "secondary"} className="text-[10px] mb-1">
-                                        {tx.type}
-                                    </Badge>
-                                    <p className={tx.type.includes("received") || tx.type.includes("C2B") ? "text-green-600 font-medium" : "text-red-600 font-medium"}>
-                                        {tx.type.includes("received") || tx.type.includes("C2B") ? "+" : "-"}{formatCurrency(tx.amount)}
+                                    <h3 className={`text-lg font-semibold mb-1 ${!online ? "text-amber-700" : "text-green-700"}`}>
+                                        {!online
+                                            ? (txMode === "charge" ? "Payment Queued!" : txMode === "b2c" ? "Transfer Queued!" : "Payment Queued!")
+                                            : (txMode === "charge" ? "Payment Received!" : txMode === "b2c" ? "Money Sent!" : "Tax/Fee Paid!")
+                                        }
+                                    </h3>
+                                    {lastTxId && (
+                                        <div className="my-2 bg-white rounded-lg border p-2 text-left space-y-1 mx-auto max-w-xs">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-muted-foreground">TX:</span>
+                                                <span className="font-mono text-[10px]">{lastTxId}</span>
+                                            </div>
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-muted-foreground">Type:</span>
+                                                <Badge variant="outline" className="text-[10px]">{lastTxType}</Badge>
+                                            </div>
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-muted-foreground">Status:</span>
+                                                {!online ? (
+                                                    <Badge className="bg-amber-100 text-amber-700 text-[10px]">Queued (Offline)</Badge>
+                                                ) : (
+                                                    <Badge className="bg-green-100 text-green-700 text-[10px]">Settled</Badge>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <p className={`text-sm ${!online ? "text-amber-600" : "text-green-600"}`}>
+                                        {!online ? "Will auto-sync when back online ⏳" : "Transaction settled ✓"}
                                     </p>
-                                </div>
-                            </div>
-                        ))}
-                    </CardContent>
-                </Card>
-            )}
+                                </>
+                            )}
+                        </CardContent>
+                    </Card>
 
-            </>
+                    {/* Transaction Log */}
+                    {txLog.length > 0 && (
+                        <Card>
+                            <CardHeader className="pb-2">
+                                <CardTitle className="text-sm">NFC Transaction Log</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-2">
+                                {txLog.slice(0, 10).map((tx) => (
+                                    <div key={tx.id} className="flex items-center justify-between bg-muted/30 rounded-lg p-2 border text-xs">
+                                        <div>
+                                            <span className="font-mono text-[10px]">{tx.id}</span>
+                                            <p className="text-muted-foreground">{tx.counterparty}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <Badge variant={tx.type.includes("received") || tx.type.includes("C2B") ? "default" : "secondary"} className="text-[10px] mb-1">
+                                                {tx.type}
+                                            </Badge>
+                                            <p className={tx.type.includes("received") || tx.type.includes("C2B") ? "text-green-600 font-medium" : "text-red-600 font-medium"}>
+                                                {tx.type.includes("received") || tx.type.includes("C2B") ? "+" : "-"}{formatCurrency(tx.amount)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </CardContent>
+                        </Card>
+                    )}
+
+                </>
             )}
 
             {/* Instructions */}

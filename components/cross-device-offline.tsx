@@ -26,8 +26,6 @@ import {
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import { useWallet } from "@/contexts/wallet-context";
-import { queueTransaction } from "@/lib/db";
-import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import {
     createSignedPaymentRequest,
     verifyPaymentRequest,
@@ -41,6 +39,11 @@ import {
     type SignedPaymentReceipt,
 } from "@/lib/offline-handshake";
 import { QRCodeDisplay } from "@/components/qr-code";
+import {
+    executeACIDTransaction,
+    executeMerchantACIDTransaction,
+} from "@/lib/acid-transaction";
+import { generateKeyPair, keyToHex, signPayload, generateNonce } from "@/lib/crypto";
 
 // ═══════════════════════════════════════════════════════════════════
 //  MERCHANT SIDE: Generate signed QR → Scan receipt QR
@@ -68,7 +71,7 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
     useEffect(() => {
         return () => {
             if (scannerRef.current) {
-                scannerRef.current.stop().catch(() => {});
+                scannerRef.current.stop().catch(() => { });
                 scannerRef.current = null;
             }
         };
@@ -116,7 +119,7 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
             const { Html5Qrcode } = await import("html5-qrcode");
 
             if (scannerRef.current) {
-                try { await scannerRef.current.stop(); } catch {}
+                try { await scannerRef.current.stop(); } catch { }
             }
 
             const scanner = new Html5Qrcode(scannerContainerId);
@@ -127,10 +130,10 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
                 { fps: 15, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
                 (decodedText) => {
                     handleReceiptScanned(decodedText);
-                    scanner.stop().catch(() => {});
+                    scanner.stop().catch(() => { });
                     scannerRef.current = null;
                 },
-                () => {}
+                () => { }
             );
         } catch (err: any) {
             setError(err.message || "Camera failed");
@@ -142,10 +145,22 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
     const handleReceiptScanned = (data: string) => {
         setPhase("verifying");
 
+        if (data.startsWith("http") || data.startsWith("upa://")) {
+            setError("This is an Online QR. Expecting an Offline Receipt.");
+            setPhase("error");
+            return;
+        }
+
         try {
             const decoded = decodeFromQR(data);
-            if (!decoded || !isPaymentReceipt(decoded)) {
-                setError("Invalid QR — not a payment receipt");
+            if (!decoded) {
+                setError("Invalid QR. Is this a signed receipt?");
+                setPhase("error");
+                return;
+            }
+
+            if (!isPaymentReceipt(decoded)) {
+                setError("Wrong QR. Expecting Customer Receipt, got something else.");
                 setPhase("error");
                 return;
             }
@@ -170,8 +185,8 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
         }
     };
 
-    // ── Record transaction on merchant side ──────────────────────────
-    const recordMerchantTransaction = (rcpt: SignedPaymentReceipt) => {
+    // ── Record transaction on merchant side (ACID) ────────────────────
+    const recordMerchantTransaction = async (rcpt: SignedPaymentReceipt) => {
         const req = rcpt.originalRequest;
         const txId = `UPA-XDEV-M-${String(Date.now()).slice(-6)}`;
         const nonce = req.nonce;
@@ -197,6 +212,7 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
                 mode: "cross-device-offline",
                 direction: "incoming",
                 dualSigned: "true",
+                acidCompliant: "true",
             },
             status: "queued" as const,
             mode: "offline" as const,
@@ -206,11 +222,7 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
             payment_source: "wallet" as const,
         };
 
-        saveLocalTransaction(txRecord);
-        addTransaction(txRecord);
-
-        // Queue for background sync
-        queueTransaction({
+        const queuePayload = {
             payload: JSON.stringify({
                 version: "1.0",
                 upa: businessUPA,
@@ -234,7 +246,18 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
             amount: req.amount,
             intent: "Cross-Device Offline Payment",
             metadata: txRecord.metadata,
-        }).catch(() => {});
+        };
+
+        // Execute with ACID guarantees
+        const result = await executeMerchantACIDTransaction(
+            { transaction: txRecord, queuePayload },
+            { addTransaction }
+        );
+
+        if (!result.success) {
+            console.error(`[ACID] Merchant TX failed: ${result.error} (step: ${result.failedStep})`);
+            toast.error(`Transaction recording failed: ${result.error}`);
+        }
     };
 
     const reset = () => {
@@ -244,7 +267,7 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
         setReceipt(null);
         setError("");
         if (scannerRef.current) {
-            scannerRef.current.stop().catch(() => {});
+            scannerRef.current.stop().catch(() => { });
             scannerRef.current = null;
         }
     };
@@ -259,8 +282,8 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
                         <Smartphone className="h-5 w-5 text-purple-600" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-bold text-purple-800">Cross-Device Offline</h3>
-                        <p className="text-[10px] text-purple-600">Ed25519 dual-signed QR handshake</p>
+                        <h3 className="text-sm font-bold text-purple-800">Cross-Device Offline (Request Payment)</h3>
+                        <p className="text-[10px] text-purple-600">Ed25519 dual-signed QR handshake - C2C Demo Ready</p>
                     </div>
                     <Badge variant="outline" className="ml-auto text-[10px] border-purple-300 text-purple-700">
                         <WifiOff className="h-3 w-3 mr-1" /> No Network
@@ -364,9 +387,65 @@ export function MerchantOfflineCharge({ businessName, businessUPA }: MerchantOff
                             className="w-full rounded-lg overflow-hidden border-2 border-purple-300"
                             style={{ minHeight: 280 }}
                         />
-                        <Button variant="outline" className="w-full" onClick={() => { setPhase("showing_qr"); if (scannerRef.current) { scannerRef.current.stop().catch(() => {}); scannerRef.current = null; } }}>
+                        <Button variant="outline" className="w-full" onClick={() => { setPhase("showing_qr"); if (scannerRef.current) { scannerRef.current.stop().catch(() => { }); scannerRef.current = null; } }}>
                             Cancel Scan
                         </Button>
+                        
+                        {/* Demo Mode Button */}
+                        <div className="pt-2 border-t mt-2">
+                            <Button
+                                variant="secondary"
+                                className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-semibold"
+                                onClick={async () => {
+                                    // Simulate receiving a signed receipt from a customer
+                                    try {
+                                        // 1. Generate a random customer keypair
+                                        const customerKeys = await generateKeyPair();
+                                        const customerPubKey = await keyToHex(customerKeys.publicKey);
+
+                                        // 2. Decode our original request to sign against
+                                        const req = decodeFromQR(qrData);
+                                        if (!req || !isPaymentRequest(req)) throw new Error("Invalid request data");
+
+                                        // 3. Create the receipt payload
+                                        const receiptPayload = {
+                                            protocol: "upa-offline-xdevice",
+                                            version: "1.0",
+                                            phase: "receipt",
+                                            originalRequest: req,
+                                            merchantSignature: req.signature,
+                                            payerUPA: "demo-citizen@upa.np",
+                                            payerName: "Demo Citizen",
+                                            payerPubKey: customerPubKey,
+                                            approvedAt: new Date().toISOString(),
+                                            payerNonce: generateNonce(),
+                                        };
+
+                                        // 4. Sign it with customer key
+                                        const sig = await signPayload(receiptPayload, customerKeys.privateKey);
+
+                                        // 5. Create the signed receipt object
+                                        const signedReceipt = {
+                                            ...receiptPayload,
+                                            payerSignature: sig,
+                                        } as unknown as SignedPaymentReceipt;
+
+                                        // 6. Encode and process
+                                        const encoded = encodeForQR(signedReceipt);
+                                        handleReceiptScanned(encoded);
+                                    } catch (e) {
+                                        console.error("Simulation failed", e);
+                                        toast.error("Simulation failed");
+                                    }
+                                }}
+                            >
+                                <Zap className="h-3 w-3 mr-1" />
+                                🎯 Demo Mode - Simulate Customer Receipt
+                            </Button>
+                            <p className="text-[10px] text-center text-muted-foreground mt-2">
+                                Click for instant demo without needing a customer device
+                            </p>
+                        </div>
                     </div>
                 )}
 
@@ -469,12 +548,14 @@ export function CitizenOfflinePay() {
         startScanning();
         return () => {
             if (scannerRef.current) {
-                scannerRef.current.stop().catch(() => {});
+                scannerRef.current.stop().catch(() => { });
                 scannerRef.current = null;
             }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+
 
     const startScanning = async () => {
         setPhase("scanning");
@@ -482,14 +563,20 @@ export function CitizenOfflinePay() {
         setRequest(null);
         setSigVerified(false);
 
+        // Show simulation option immediately for demo purposes
+        // if (process.env.NODE_ENV === "development") { ... } 
+
         try {
             await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
             const { Html5Qrcode } = await import("html5-qrcode");
 
             if (scannerRef.current) {
-                try { await scannerRef.current.stop(); } catch {}
+                try { await scannerRef.current.stop(); } catch { }
             }
+
+            // Optional: simulate scan button shown below camera view
+
 
             const scanner = new Html5Qrcode(scannerContainerId);
             scannerRef.current = scanner;
@@ -499,10 +586,10 @@ export function CitizenOfflinePay() {
                 { fps: 15, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
                 (decodedText) => {
                     handleMerchantQRScanned(decodedText);
-                    scanner.stop().catch(() => {});
+                    scanner.stop().catch(() => { });
                     scannerRef.current = null;
                 },
-                () => {}
+                () => { }
             );
         } catch (err: any) {
             setError(err.message || "Camera failed to start");
@@ -510,14 +597,67 @@ export function CitizenOfflinePay() {
         }
     };
 
+    const handleSimulateScan = async () => {
+        try {
+            // 1. Generate a random merchant keypair
+            const merchantKeys = await generateKeyPair();
+            const merchantPubKey = await keyToHex(merchantKeys.publicKey);
+
+            // 2. Create a fake request payload
+            const requestPayload = {
+                protocol: "upa-offline-xdevice",
+                version: "1.0",
+                phase: "request",
+                merchantUPA: "demo-merchant@upa.np",
+                merchantName: "Demo Merchant Store",
+                merchantPubKey: merchantPubKey,
+                amount: 500, // Demo amount
+                currency: "NPR",
+                intent: "Demo Purchase",
+                nonce: generateNonce(),
+                issuedAt: new Date().toISOString(),
+                expiresAt: new Date(Date.now() + 600000).toISOString(),
+            };
+
+            // 3. Sign it
+            const sig = await signPayload(requestPayload, merchantKeys.privateKey);
+
+            // 4. Create signed request
+            const signedRequest = {
+                ...requestPayload,
+                signature: sig,
+            } as unknown as SignedPaymentRequest;
+
+            // 5. Process it
+            const encoded = encodeForQR(signedRequest);
+            handleMerchantQRScanned(encoded);
+        } catch (e) {
+            console.error("Simulation failed", e);
+            toast.error("Simulation failed");
+        }
+    };
+
     // ── Verify merchant QR ───────────────────────────────────────────
     const handleMerchantQRScanned = (data: string) => {
         setPhase("verifying");
 
+        // Fast fail for common non-offline QRs
+        if (data.startsWith("http") || data.startsWith("upa://")) {
+            setError("This is an Online Payment QR. Please ask merchant for Offline QR.");
+            setPhase("error");
+            return;
+        }
+
         try {
             const decoded = decodeFromQR(data);
-            if (!decoded || !isPaymentRequest(decoded)) {
-                setError("Invalid QR — not a cross-device payment request");
+            if (!decoded) {
+                setError("Invalid QR format. Is this a UPA Offline QR?");
+                setPhase("error");
+                return;
+            }
+
+            if (!isPaymentRequest(decoded)) {
+                setError("Wrong QR type. Expecting Merchant Request, got something else.");
                 setPhase("error");
                 return;
             }
@@ -543,17 +683,17 @@ export function CitizenOfflinePay() {
         }
     };
 
-    // ── Approve and generate receipt ─────────────────────────────────
+    // ── Approve and generate receipt (ACID) ────────────────────────────
     const approvePayment = async () => {
         if (!request) return;
 
-        // Balance check
+        // Balance check (also validated by ACID layer, but UX check here)
         if (request.amount > balance) {
             toast.error("Insufficient balance");
             return;
         }
 
-        // Offline limit check
+        // Offline limit check (also validated by ACID layer)
         if (!canSpendOffline(request.amount)) {
             toast.error(`Offline limit exceeded! Remaining: ${formatCurrency(offlineWallet.balance)}`);
             return;
@@ -572,7 +712,7 @@ export function CitizenOfflinePay() {
                 payerName: myName,
             });
 
-            // Record transaction locally
+            // Build transaction record
             const txId = `UPA-XDEV-C-${String(Date.now()).slice(-6)}`;
             const txRecord = {
                 id: txId,
@@ -595,6 +735,7 @@ export function CitizenOfflinePay() {
                     mode: "cross-device-offline",
                     direction: "outgoing",
                     dualSigned: "true",
+                    acidCompliant: "true",
                 },
                 status: "queued" as const,
                 mode: "offline" as const,
@@ -604,14 +745,7 @@ export function CitizenOfflinePay() {
                 payment_source: "wallet" as const,
             };
 
-            // Deduct balance, consume offline limit
-            updateBalance(request.amount);
-            spendFromSaralPay(request.amount);
-            saveLocalTransaction(txRecord);
-            addTransaction(txRecord);
-
-            // Queue for sync
-            await queueTransaction({
+            const queuePayload = {
                 payload: JSON.stringify({
                     version: "1.0",
                     upa: request.merchantUPA,
@@ -635,14 +769,34 @@ export function CitizenOfflinePay() {
                 amount: request.amount,
                 intent: "Cross-Device Offline Payment",
                 metadata: txRecord.metadata,
-            }).catch(() => {});
+            };
 
-            // Request background sync when connectivity returns
-            if ("serviceWorker" in navigator && "SyncManager" in window) {
-                try {
-                    const reg = await navigator.serviceWorker.ready;
-                    await (reg as any).sync.register("sync-transactions");
-                } catch {}
+            // ═══ ACID Transaction Execution ═══
+            // Atomicity: journal-based rollback if any step fails
+            // Consistency: balance, offline limit, nonce dedup checks
+            // Isolation: mutex lock prevents concurrent payments
+            // Durability: WAL + verified writes to localStorage & IndexedDB
+            const acidResult = await executeACIDTransaction(
+                {
+                    transaction: txRecord,
+                    queuePayload,
+                    deductAmount: request.amount,
+                    currentBalance: balance,
+                    offlineBalance: offlineWallet.balance,
+                    consumesOfflineWallet: true,
+                },
+                {
+                    addTransaction,
+                    updateBalance,
+                    spendFromSaralPay,
+                }
+            );
+
+            if (!acidResult.success) {
+                setError(acidResult.error || "ACID transaction failed");
+                setPhase("error");
+                toast.error(`Payment failed: ${acidResult.error}`);
+                return;
             }
 
             // Generate receipt QR for merchant to scan
@@ -650,7 +804,7 @@ export function CitizenOfflinePay() {
             setPhase("showing_receipt");
 
             if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 100]);
-            toast.success("Payment approved! Show receipt to merchant.");
+            toast.success("Payment approved (ACID verified)! Show receipt to merchant.");
         } catch (err: any) {
             setError(err.message || "Failed to generate receipt");
             setPhase("error");
@@ -680,12 +834,25 @@ export function CitizenOfflinePay() {
                         <Camera className="h-5 w-5 text-indigo-600" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-bold text-indigo-800">Cross-Device Offline Pay</h3>
-                        <p className="text-[10px] text-indigo-600">Scan merchant QR &rarr; verify &rarr; approve</p>
+                        <h3 className="text-sm font-bold text-indigo-800">Cross-Device Offline Pay (C2C)</h3>
+                        <p className="text-[10px] text-indigo-600">Scan merchant QR or use Demo Mode &rarr; verify &rarr; approve</p>
                     </div>
                     <Badge variant="outline" className="ml-auto text-[10px] border-indigo-300 text-indigo-700">
                         <WifiOff className="h-3 w-3 mr-1" /> No Network
                     </Badge>
+                </div>
+
+                {/* Demo Info Banner */}
+                <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-200 rounded-lg p-3">
+                    <div className="flex items-start gap-2">
+                        <Zap className="h-4 w-4 text-purple-600 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1">
+                            <p className="text-xs font-semibold text-purple-800">Demo Mode Available!</p>
+                            <p className="text-[10px] text-purple-600 mt-0.5">
+                                Click the Demo Mode button below to simulate a complete offline C2C payment flow without needing to scan a real QR code.
+                            </p>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Phase: Scanning */}
@@ -705,6 +872,21 @@ export function CitizenOfflinePay() {
                         <div className="flex items-center justify-center gap-2 text-xs text-indigo-600">
                             <Shield className="h-3.5 w-3.5" />
                             Signature will be verified locally — no server needed
+                        </div>
+                        
+                        {/* Demo Mode Button */}
+                        <div className="pt-3 border-t">
+                            <Button
+                                variant="secondary"
+                                className="w-full bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-600 hover:to-purple-600 text-white font-semibold"
+                                onClick={handleSimulateScan}
+                            >
+                                <Zap className="h-4 w-4 mr-2" />
+                                🎯 Demo Mode - Simulate Scan (NPR 500)
+                            </Button>
+                            <p className="text-[10px] text-center text-muted-foreground mt-2">
+                                Click for instant demo without needing a real QR code
+                            </p>
                         </div>
                     </div>
                 )}
@@ -884,7 +1066,7 @@ function DualSignatureProof({
     const [copiedField, setCopiedField] = useState<string | null>(null);
 
     const copyToClipboard = (text: string, field: string) => {
-        navigator.clipboard.writeText(text).catch(() => {});
+        navigator.clipboard.writeText(text).catch(() => { });
         setCopiedField(field);
         setTimeout(() => setCopiedField(null), 1500);
     };

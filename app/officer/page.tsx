@@ -51,6 +51,8 @@ import {
 } from "@/components/ui/select";
 import type { UPA, StaticQRPayload } from "@/types";
 
+import { useWallet } from "@/contexts/wallet-context";
+
 export default function OfficerPageWrapper() {
     return (
         <RouteGuard allowedRoles={["officer"]}>
@@ -60,6 +62,7 @@ export default function OfficerPageWrapper() {
 }
 
 function OfficerPage() {
+    const { user } = useWallet();
     const { online } = useNetwork();
     const [upas, setUpas] = useState<UPA[]>([]);
     const [selectedUpa, setSelectedUpa] = useState<UPA | null>(null);
@@ -74,6 +77,9 @@ function OfficerPage() {
     const [isOfflineMode, setIsOfflineMode] = useState(false);
     const [signing, setSigning] = useState(false);
     const [showUpaSelection, setShowUpaSelection] = useState(false);
+    const [isSelectionLocked, setIsSelectionLocked] = useState(false);
+
+    const storageKey = user?.id ? `upa_officer_selected_office:${user.id}` : "upa_officer_selected_office";
 
     const selectedIntent = selectedUpa?.intents.find((i) => i.intent_code === selectedIntentCode) || null;
 
@@ -92,32 +98,73 @@ function OfficerPage() {
     }, [selectedUpa, selectedIntentCode]);
 
     useEffect(() => {
-        fetch("/api/upas")
-            .then((r) => r.json())
-            .then((res) => {
-                setUpas(res.data || []);
+        if (!user) return; // Wait for user to be loaded
 
-                // Check if officer has previously selected a UPA
-                const storedUpaAddress = localStorage.getItem("upa_officer_selected_office");
+        async function loadData() {
+            try {
+                // 1. Fetch UPAs
+                const upaRes = await fetch("/api/upas");
+                const upaJson = await upaRes.json();
+                const govOffices = (upaJson.data || []).filter((u: UPA) => u.entity_type === "government");
+                setUpas(govOffices);
 
-                if (storedUpaAddress) {
-                    const storedUpa = res.data?.find((u: UPA) => u.address === storedUpaAddress);
-                    if (storedUpa) {
-                        setSelectedUpa(storedUpa);
-                        if (storedUpa.intents?.[0]) {
-                            setSelectedIntentCode(storedUpa.intents[0].intent_code);
+                // 2. Fetch officer state from DB
+                const stateRes = await fetch(`/api/officer/state?user_id=${user!.id}`);
+                const stateJson = await stateRes.json();
+                const dbState = stateJson.data;
+
+                // 3. Check LocalStorage (migration fallback)
+                let localSelection = localStorage.getItem(storageKey);
+
+                // Priority: DB > LocalStorage
+                let finalUpaAddress = dbState?.selected_upa_address || localSelection;
+
+                if (finalUpaAddress) {
+                    const matchedUpa = govOffices.find((u: UPA) => u.address === finalUpaAddress);
+                    if (matchedUpa) {
+                        setSelectedUpa(matchedUpa);
+                        setIsSelectionLocked(true);
+
+                        // If DB had state, restore intent + QR
+                        if (dbState) {
+                            if (dbState.selected_intent_code) {
+                                setSelectedIntentCode(dbState.selected_intent_code);
+                            } else if (matchedUpa.intents?.[0]) {
+                                setSelectedIntentCode(matchedUpa.intents[0].intent_code);
+                            }
+
+                            if (dbState.last_qr_payload) {
+                                setQrData(JSON.stringify(dbState.last_qr_payload));
+                            }
+                        } else {
+                            // If we only had local storage, default intent
+                            if (matchedUpa.intents?.[0]) {
+                                setSelectedIntentCode(matchedUpa.intents[0].intent_code);
+                            }
+                            // And migrate to DB!
+                            fetch("/api/officer/state", {
+                                method: "POST",
+                                body: JSON.stringify({
+                                    user_id: user!.id,
+                                    selected_upa_address: finalUpaAddress
+                                })
+                            });
                         }
-                        return;
+                        return; // Done
                     }
                 }
 
-                // First time login - show selection dialog
-                if (res.data && res.data.length > 0) {
+                // 4. If nothing selected, show dialog
+                if (govOffices.length > 0) {
                     setShowUpaSelection(true);
                 }
-            })
-            .catch(console.error);
-    }, []);
+            } catch (error) {
+                console.error("Failed to load officer data", error);
+            }
+        }
+
+        loadData();
+    }, [user, storageKey]);
 
     const loadTransactions = useCallback(async () => {
         try {
@@ -158,14 +205,34 @@ function OfficerPage() {
         return () => clearInterval(interval);
     }, [loadTransactions]);
 
-    const handleUpaSelect = (address: string, saveToStorage = false) => {
+    const handleUpaSelect = async (address: string, saveToStorage = false) => {
         const upa = upas.find((u) => u.address === address);
         if (upa) {
             setSelectedUpa(upa);
-            setSelectedIntentCode(upa.intents?.[0]?.intent_code || "");
+            const defaultIntent = upa.intents?.[0]?.intent_code || "";
+            // Only update intent if not already set (or if forcing a change)
+            if (!selectedIntentCode) {
+                setSelectedIntentCode(defaultIntent);
+            }
             setQrData(null);
-            if (saveToStorage) {
-                localStorage.setItem("upa_officer_selected_office", address);
+
+            if (saveToStorage && user) {
+                localStorage.setItem(storageKey, address);
+                setIsSelectionLocked(true);
+
+                try {
+                    await fetch("/api/officer/state", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            user_id: user.id,
+                            selected_upa_address: address,
+                            selected_intent_code: defaultIntent
+                        })
+                    });
+                } catch (e) {
+                    console.error("Failed to save state", e);
+                }
             }
         }
     };
@@ -178,7 +245,7 @@ function OfficerPage() {
         });
     };
 
-    const handleGenerateQR = async () => {
+    const handleGenerateQR = useCallback(async () => {
         if (!selectedUpa || !selectedIntent) {
             toast.error("Missing Selection", { description: "Please select an entity and payment type" });
             return;
@@ -228,6 +295,21 @@ function OfficerPage() {
                 };
                 setQrData(JSON.stringify(signedPayload));
                 setQrImageUrl(null);
+
+                // Save active QR to DB
+                if (user) {
+                    fetch("/api/officer/state", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            user_id: user.id,
+                            selected_upa_address: selectedUpa.address,
+                            selected_intent_code: selectedIntent.intent_code,
+                            last_qr_payload: signedPayload
+                        })
+                    }).catch(console.error);
+                }
+
                 toast.success("Signed Offline QR Generated", {
                     description: "Ed25519 cryptographic signature applied",
                 });
@@ -239,9 +321,27 @@ function OfficerPage() {
         } else {
             setQrData(JSON.stringify(payload));
             setQrImageUrl(null);
+
+            // Save active QR to DB (Standard Mode)
+            if (user) {
+                fetch("/api/officer/state", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        user_id: user.id,
+                        selected_upa_address: selectedUpa.address,
+                        selected_intent_code: selectedIntent.intent_code,
+                        last_qr_payload: payload
+                    })
+                }).catch(console.error);
+            }
+
             toast.success("QR Code Generated");
         }
-    };
+    }, [selectedUpa, selectedIntent, isOfflineMode, user]);
+
+    // Auto-regeneration removed to prevent loop
+    // Network sync removed to prevent UI flickering
 
     const handleQRRendered = async (dataUrl: string) => {
         if (!selectedUpa || !selectedIntent) return;
@@ -447,7 +547,7 @@ function OfficerPage() {
                         <CardContent className="space-y-4">
                             <div className="space-y-2">
                                 <Label>Government Entity</Label>
-                                <Select value={selectedUpa?.address || ""} onValueChange={handleUpaSelect}>
+                                <Select value={selectedUpa?.address || ""} onValueChange={handleUpaSelect} disabled={isSelectionLocked}>
                                     <SelectTrigger><SelectValue placeholder="Select entity" /></SelectTrigger>
                                     <SelectContent>
                                         {upas.map((upa) => (

@@ -25,7 +25,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-const PRESETS = [2000, 5000, 10000, 20000];
+import { OFFLINE_WALLET_MAX_BALANCE } from "@/lib/offline-policy";
+
+const PRESETS = [500, 1000, 1500, 2000];
 
 export default function SettingsPage() {
     return (
@@ -62,6 +64,11 @@ function SaralPaySettings() {
             toast.error(`Insufficient main balance. Available: ${formatCurrency(balance)}`);
             return;
         }
+        if (offlineWallet.balance + amt > OFFLINE_WALLET_MAX_BALANCE) {
+            toast.error(`Cannot exceed wallet limit of ${formatCurrency(OFFLINE_WALLET_MAX_BALANCE)}. Current: ${formatCurrency(offlineWallet.balance)}`);
+            return;
+        }
+
         const ok = loadSaralPay(amt);
         if (ok) {
             toast.success(`Loaded ${formatCurrency(amt)} into SaralPay Wallet`);
@@ -72,8 +79,8 @@ function SaralPaySettings() {
 
     const handleCustomLoad = () => {
         const amt = Number(customAmount);
-        if (amt <= 0 || amt > 50000) {
-            toast.error("Enter an amount between 1 and 50,000");
+        if (amt <= 0 || amt > 2000) {
+            toast.error("Enter an amount between 1 and 2,000");
             return;
         }
         handleLoad(amt);

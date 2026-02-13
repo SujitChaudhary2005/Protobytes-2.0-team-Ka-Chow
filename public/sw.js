@@ -182,10 +182,12 @@ function syncQueuedPayments() {
             // Attempt sync via API
             var payments = queued.map(function (item) {
                 return {
-                    qrPayload: JSON.parse(item.payload),
+                    payload: item.payload,
                     signature: item.signature,
                     nonce: item.nonce,
                     publicKey: item.publicKey,
+                    client_tx_id: item.client_tx_id || undefined,
+                    timestamp: item.timestamp,
                 };
             });
 
@@ -205,10 +207,10 @@ function syncQueuedPayments() {
                                 var serverResult = result.results[j];
                                 if (serverResult) {
                                     queued[j].status =
-                                        serverResult.status === "settled" ? "settled" : "failed";
+                                        (serverResult.status === "settled" || serverResult.status === "success") ? "settled" : "failed";
                                     queued[j].error =
-                                        serverResult.status === "rejected"
-                                            ? serverResult.reason
+                                        (serverResult.status === "rejected" || serverResult.status === "expired")
+                                            ? (serverResult.error || serverResult.reason)
                                             : undefined;
                                     queued[j].syncedAt =
                                         serverResult.status === "settled" ? Date.now() : undefined;
@@ -240,17 +242,38 @@ function syncQueuedPayments() {
 
 function openIDB() {
     return new Promise(function (resolve, reject) {
-        var req = indexedDB.open("UPAOfflineDB", 1);
-        req.onupgradeneeded = function () {
-            if (!req.result.objectStoreNames.contains("transactions")) {
-                var store = req.result.createObjectStore("transactions", {
+        var req = indexedDB.open("UPAOfflineDB", 2);
+        req.onupgradeneeded = function (event) {
+            var db = req.result;
+            if (!db.objectStoreNames.contains("transactions")) {
+                var store = db.createObjectStore("transactions", {
                     keyPath: "id",
                     autoIncrement: true,
                 });
-                // Create indexes to match Dexie schema (lib/db.ts)
                 store.createIndex("timestamp", "timestamp", { unique: false });
                 store.createIndex("status", "status", { unique: false });
                 store.createIndex("recipient", "recipient", { unique: false });
+                store.createIndex("nonce", "nonce", { unique: false });
+                store.createIndex("client_tx_id", "client_tx_id", { unique: false });
+                store.createIndex("settlement_state", "settlement_state", { unique: false });
+            } else if (event.oldVersion < 2) {
+                // Upgrade existing store with new indexes
+                var txStore = req.transaction.objectStore("transactions");
+                if (!txStore.indexNames.contains("nonce")) txStore.createIndex("nonce", "nonce", { unique: false });
+                if (!txStore.indexNames.contains("client_tx_id")) txStore.createIndex("client_tx_id", "client_tx_id", { unique: false });
+                if (!txStore.indexNames.contains("settlement_state")) txStore.createIndex("settlement_state", "settlement_state", { unique: false });
+            }
+            if (!db.objectStoreNames.contains("offlineAcceptedTxs")) {
+                var oaStore = db.createObjectStore("offlineAcceptedTxs", {
+                    keyPath: "id",
+                    autoIncrement: true,
+                });
+                oaStore.createIndex("client_tx_id", "client_tx_id", { unique: false });
+                oaStore.createIndex("settlement_state", "settlement_state", { unique: false });
+                oaStore.createIndex("acceptedAt", "acceptedAt", { unique: false });
+                oaStore.createIndex("expiresAt", "expiresAt", { unique: false });
+                oaStore.createIndex("senderUPA", "senderUPA", { unique: false });
+                oaStore.createIndex("receiverUPA", "receiverUPA", { unique: false });
             }
         };
         req.onsuccess = function () { resolve(req.result); };
