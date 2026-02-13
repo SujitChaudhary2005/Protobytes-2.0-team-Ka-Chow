@@ -1,29 +1,6 @@
 // Local storage-based data management (replaces Supabase)
 
-export interface Transaction {
-  id: string;
-  tx_id?: string;
-  tx_type?: string;
-  recipient: string;
-  recipientName?: string;
-  fromUPA?: string;
-  amount: number;
-  intent: string;
-  intentCategory?: string;
-  metadata?: Record<string, string>;
-  status: "pending" | "settled" | "failed" | "queued" | "syncing";
-  signature?: string;
-  publicKey?: string;
-  timestamp: number;
-  settledAt?: number;
-  syncedAt?: number;
-  nonce?: string;
-  walletProvider?: string;
-  mode?: "online" | "offline" | "nfc" | "camera";
-  payment_source?: string;
-  bank_name?: string;
-  message?: string;
-}
+import { Transaction } from "@/types";
 
 export interface PaymentRequest {
   id: string;
@@ -39,6 +16,7 @@ export interface PaymentRequest {
   created_at: string;
 }
 
+
 const STORAGE_KEYS = {
   transactions: "upa_transactions_db",
   paymentRequests: "upa_payment_requests_db",
@@ -49,7 +27,7 @@ const STORAGE_KEYS = {
  */
 export function getTransactions(): Transaction[] {
   if (typeof window === "undefined") return [];
-  
+
   try {
     const stored = localStorage.getItem(STORAGE_KEYS.transactions);
     if (!stored) return [];
@@ -64,7 +42,7 @@ export function getTransactions(): Transaction[] {
  */
 export function saveTransaction(transaction: Transaction): void {
   if (typeof window === "undefined") return;
-  
+
   const transactions = getTransactions();
   transactions.unshift(transaction);
   localStorage.setItem(STORAGE_KEYS.transactions, JSON.stringify(transactions));
@@ -78,7 +56,7 @@ export function updateTransactionStatus(
   status: Transaction["status"]
 ): void {
   if (typeof window === "undefined") return;
-  
+
   const transactions = getTransactions();
   const index = transactions.findIndex((t) => t.id === id);
   if (index !== -1) {
@@ -100,7 +78,7 @@ export async function submitTransaction(
   }
 ): Promise<Transaction> {
   const payload = JSON.parse(signedPayload.payload);
-  
+
   const transaction: Transaction = {
     id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     recipient: payload.recipient,
@@ -187,7 +165,7 @@ export async function getPaymentRequest(
   id: string
 ): Promise<PaymentRequest | null> {
   if (typeof window === "undefined") return null;
-  
+
   try {
     const stored = localStorage.getItem(STORAGE_KEYS.paymentRequests);
     if (!stored) return null;

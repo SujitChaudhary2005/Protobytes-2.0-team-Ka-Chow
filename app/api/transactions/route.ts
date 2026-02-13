@@ -3,7 +3,7 @@ import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { getTransactions as getLocalTransactions, saveTransaction as saveLocalTransaction } from "@/lib/storage";
 
 // Fallback demo transactions (shown when Supabase is not configured and localStorage is empty)
-const FALLBACK_TRANSACTIONS = [
+const FALLBACK_TRANSACTIONS: any[] = [
   { id: "demo-001", tx_id: "UPA-2026-00001", recipient: "traffic@nepal.gov", recipientName: "Nepal Traffic Police", amount: 500, intent: "Traffic Violation Fine", intentCategory: "fine", status: "settled", mode: "online", metadata: { violation: "Red Zone Parking", vehicle: "BA 1 PA 4567", location: "New Road, Kathmandu", license: "ABC-1234" }, timestamp: Date.now() - 6 * 3600000, settledAt: Date.now() - 5.97 * 3600000, walletProvider: "upa_pay" },
   { id: "demo-002", tx_id: "UPA-2026-00002", recipient: "traffic@nepal.gov", recipientName: "Nepal Traffic Police", amount: 1000, intent: "Traffic Violation Fine", intentCategory: "fine", status: "settled", mode: "offline", metadata: { violation: "Signal Jump", vehicle: "BA 2 PA 8901", location: "Kalanki Chowk", license: "DEF-5678" }, timestamp: Date.now() - 5 * 3600000, settledAt: Date.now() - 4.92 * 3600000, walletProvider: "upa_pay" },
   { id: "demo-003", tx_id: "UPA-2026-00003", recipient: "traffic@nepal.gov", recipientName: "Nepal Traffic Police", amount: 2000, intent: "Traffic Violation Fine", intentCategory: "fine", status: "settled", mode: "online", metadata: { violation: "Drunk Driving", vehicle: "BA 3 KHA 3456", location: "Tinkune", license: "GHI-9012" }, timestamp: Date.now() - 4.5 * 3600000, settledAt: Date.now() - 4.47 * 3600000, walletProvider: "upa_pay" },
@@ -77,7 +77,9 @@ export async function GET(request: NextRequest) {
 
     // Fallback: localStorage-based (for development without Supabase)
     const localTx = getLocalTransactions();
-    const txData = localTx.length > 0 ? localTx : FALLBACK_TRANSACTIONS;
+    // Only show fallback data if explicitly in DEMO mode
+    const showDemoData = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+    const txData = localTx.length > 0 ? localTx : (showDemoData ? FALLBACK_TRANSACTIONS : []);
     const filtered = txData.filter((tx) => {
       if (status && status !== "all" && tx.status !== status) return false;
       if (upaId) {
@@ -98,7 +100,8 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching transactions:", error);
     // Fallback to local or demo data
     const localTx = getLocalTransactions();
-    const txData = localTx.length > 0 ? localTx : FALLBACK_TRANSACTIONS;
+    const showDemoData = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+    const txData = localTx.length > 0 ? localTx : (showDemoData ? FALLBACK_TRANSACTIONS : []);
     return NextResponse.json({
       data: txData,
       pagination: { page: 1, total: txData.length, totalPages: 1 },

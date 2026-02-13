@@ -194,44 +194,44 @@ function syncQueuedPayments() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ payments: payments }),
             })
-            .then(function (response) { return response.json(); })
-            .then(function (result) {
-                return openIDB().then(function (db2) {
-                    var txUpdate = db2.transaction("transactions", "readwrite");
-                    var updateStore = txUpdate.objectStore("transactions");
+                .then(function (response) { return response.json(); })
+                .then(function (result) {
+                    return openIDB().then(function (db2) {
+                        var txUpdate = db2.transaction("transactions", "readwrite");
+                        var updateStore = txUpdate.objectStore("transactions");
 
-                    if (result.results && Array.isArray(result.results)) {
-                        for (var j = 0; j < queued.length; j++) {
-                            var serverResult = result.results[j];
-                            if (serverResult) {
-                                queued[j].status =
-                                    serverResult.status === "settled" ? "settled" : "failed";
-                                queued[j].error =
-                                    serverResult.status === "rejected"
-                                        ? serverResult.reason
-                                        : undefined;
-                                queued[j].syncedAt =
-                                    serverResult.status === "settled" ? Date.now() : undefined;
-                            } else {
-                                queued[j].status = "failed";
-                                queued[j].error = "no_server_response";
+                        if (result.results && Array.isArray(result.results)) {
+                            for (var j = 0; j < queued.length; j++) {
+                                var serverResult = result.results[j];
+                                if (serverResult) {
+                                    queued[j].status =
+                                        serverResult.status === "settled" ? "settled" : "failed";
+                                    queued[j].error =
+                                        serverResult.status === "rejected"
+                                            ? serverResult.reason
+                                            : undefined;
+                                    queued[j].syncedAt =
+                                        serverResult.status === "settled" ? Date.now() : undefined;
+                                } else {
+                                    queued[j].status = "failed";
+                                    queued[j].error = "no_server_response";
+                                }
+                                updateStore.put(queued[j]);
                             }
-                            updateStore.put(queued[j]);
                         }
-                    }
 
-                    // Notify the client
-                    return self.clients.matchAll({ type: "window" }).then(function (clients) {
-                        for (var c = 0; c < clients.length; c++) {
-                            clients[c].postMessage({
-                                type: "SYNC_COMPLETE",
-                                synced: queued.filter(function (q) { return q.status === "settled"; }).length,
-                                failed: queued.filter(function (q) { return q.status === "failed"; }).length,
-                            });
-                        }
+                        // Notify the client
+                        return self.clients.matchAll({ type: "window" }).then(function (clients) {
+                            for (var c = 0; c < clients.length; c++) {
+                                clients[c].postMessage({
+                                    type: "SYNC_COMPLETE",
+                                    synced: queued.filter(function (q) { return q.status === "settled"; }).length,
+                                    failed: queued.filter(function (q) { return q.status === "failed"; }).length,
+                                });
+                            }
+                        });
                     });
                 });
-            });
         });
     }).catch(function (error) {
         console.error("[SW] Background sync failed:", error);
@@ -243,10 +243,14 @@ function openIDB() {
         var req = indexedDB.open("UPAOfflineDB", 1);
         req.onupgradeneeded = function () {
             if (!req.result.objectStoreNames.contains("transactions")) {
-                req.result.createObjectStore("transactions", {
+                var store = req.result.createObjectStore("transactions", {
                     keyPath: "id",
                     autoIncrement: true,
                 });
+                // Create indexes to match Dexie schema (lib/db.ts)
+                store.createIndex("timestamp", "timestamp", { unique: false });
+                store.createIndex("status", "status", { unique: false });
+                store.createIndex("recipient", "recipient", { unique: false });
             }
         };
         req.onsuccess = function () { resolve(req.result); };

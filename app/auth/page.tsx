@@ -33,13 +33,10 @@ export default function AuthPage() {
         }
     }, [isLoading, isAuthenticated, role, router]);
 
-    if (isLoading) {
-        return (
-            <div className="flex min-h-[50vh] items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-            </div>
-        );
-    }
+    // Optimistic UI: Don't block with loading spinner. 
+    // Show login form by default to enable SSR/fast paint.
+    // UseEffect will handle redirect if session exists.
+
 
     // Show authenticated state briefly before redirect
     if (isAuthenticated && user && role) {

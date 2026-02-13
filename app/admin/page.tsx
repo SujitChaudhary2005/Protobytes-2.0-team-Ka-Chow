@@ -5,7 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { getTransactions, Transaction } from "@/lib/storage";
+import { getTransactions } from "@/lib/storage";
+import { Transaction } from "@/types";
 import { isSupabaseConfigured, subscribeToTransactions } from "@/lib/supabase";
 import { toast } from "sonner";
 import { RouteGuard } from "@/components/route-guard";

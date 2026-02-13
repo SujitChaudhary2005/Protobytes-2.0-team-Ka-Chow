@@ -44,11 +44,11 @@ const DEMO_USERS: AppUser[] = [
 export { DEMO_USERS };
 
 const DEMO_PASSWORDS: Record<string, string> = {
-    "citizen@demo.np": "citizen123",
-    "citizen2@demo.np": "citizen123",
-    "officer@demo.np": "officer123",
-    "merchant@demo.np": "merchant123",
-    "admin@demo.np": "admin123",
+    "citizen@demo.np": process.env.NEXT_PUBLIC_DEMO_PASSWORD_CITIZEN || "citizen123",
+    "citizen2@demo.np": process.env.NEXT_PUBLIC_DEMO_PASSWORD_CITIZEN || "citizen123",
+    "officer@demo.np": process.env.NEXT_PUBLIC_DEMO_PASSWORD_OFFICER || "officer123",
+    "merchant@demo.np": process.env.NEXT_PUBLIC_DEMO_PASSWORD_MERCHANT || "merchant123",
+    "admin@demo.np": process.env.NEXT_PUBLIC_DEMO_PASSWORD_ADMIN || "admin123",
 };
 
 interface WalletContextType {
