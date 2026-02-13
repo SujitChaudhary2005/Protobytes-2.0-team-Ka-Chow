@@ -53,8 +53,8 @@ const bottomNavItems: BottomNavItem[] = [
         roles: ["citizen", "merchant"],
     },
     {
-        label: "Officer Portal",
-        shortLabel: "Officer",
+        label: "Gov Office Portal",
+        shortLabel: "Office",
         url: "/officer",
         icon: QrCode,
         roles: ["officer"],

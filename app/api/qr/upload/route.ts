@@ -96,12 +96,24 @@ export async function GET(request: NextRequest) {
 
         const safeName = `${upa}-${intent}.png`.replace(/[^a-zA-Z0-9@._-]/g, "_");
 
+        // Verify the file actually exists (getPublicUrl always returns a URL)
+        const { data: files, error: listError } = await supabase.storage
+            .from("qr-codes")
+            .list("", { search: safeName, limit: 1 });
+
+        const exists = !listError && files && files.some((f) => f.name === safeName);
+
+        if (!exists) {
+            return NextResponse.json({ success: true, exists: false, url: null });
+        }
+
         const { data: urlData } = supabase.storage
             .from("qr-codes")
             .getPublicUrl(safeName);
 
         return NextResponse.json({
             success: true,
+            exists: true,
             url: urlData.publicUrl,
         });
     } catch (err: any) {

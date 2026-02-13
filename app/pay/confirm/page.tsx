@@ -8,21 +8,30 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useWallet } from "@/contexts/wallet-context";
 import { useNetwork } from "@/hooks/use-network";
-import { generateNonce } from "@/lib/crypto";
+import { generateNonce, verifySignature } from "@/lib/crypto";
 import { queueTransaction } from "@/lib/db";
 import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
+import { VerificationPanel } from "@/components/verification-panel";
 import type { StaticQRPayload } from "@/types";
 import { Shield, Wifi, WifiOff, Loader2, AlertTriangle } from "lucide-react";
 
 function ConfirmContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { wallet, addTransaction, updateBalance } = useWallet();
+    const { wallet, addTransaction, updateBalance, canSpendOffline, useOfflineLimit: consumeOfflineLimit, offlineLimit } = useWallet();
     const { online } = useNetwork();
 
     const [staticPayload, setStaticPayload] = useState<StaticQRPayload | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [processing, setProcessing] = useState(false);
+
+    // Signature verification state
+    const [hasSig, setHasSig] = useState(false);
+    const [sigVerified, setSigVerified] = useState(false);
+    const [qrSignature, setQrSignature] = useState("");
+    const [qrPublicKey, setQrPublicKey] = useState("");
+    const [qrNonce, setQrNonce] = useState("");
+    const [qrTimestamp, setQrTimestamp] = useState(0);
 
     // Citizen-entered fields
     const [payerName, setPayerName] = useState("");
@@ -40,13 +49,53 @@ function ConfirmContent() {
             const parsed = JSON.parse(decodeURIComponent(data)) as StaticQRPayload;
             setStaticPayload(parsed);
 
+            // Check for Ed25519 signature (offline-signed QR)
+            if (parsed.signature && parsed.publicKey && parsed.signed) {
+                setHasSig(true);
+                setQrSignature(parsed.signature);
+                setQrPublicKey(parsed.publicKey);
+                setQrNonce(parsed.nonce || "");
+                setQrTimestamp(parsed.issuedAt ? new Date(parsed.issuedAt).getTime() : Date.now());
+
+                // Verify Ed25519 signature client-side (no server needed)
+                try {
+                    // Reconstruct the signable payload (without signature/publicKey/signed)
+                    const { signature: _s, publicKey: _p, signed: _b, ...signablePayload } = parsed;
+                    const isValid = verifySignature(signablePayload, parsed.signature, parsed.publicKey);
+                    setSigVerified(isValid);
+                } catch {
+                    setSigVerified(false);
+                }
+            }
+
             // Pre-fill amount if fixed
             if (parsed.amount_type === "fixed" && parsed.amount) {
                 setAmount(String(parsed.amount));
             }
 
-            // Initialize metadata fields from schema
-            if (parsed.metadata_schema) {
+            // If metadata_schema is empty (compact QR), fetch full schema from server
+            if (!parsed.metadata_schema || Object.keys(parsed.metadata_schema).length === 0) {
+                fetch("/api/upas")
+                    .then((r) => r.json())
+                    .then((res) => {
+                        const upas = res.data || [];
+                        const matchedUpa = upas.find((u: any) => u.address === parsed.upa);
+                        if (matchedUpa) {
+                            const matchedIntent = matchedUpa.intents.find(
+                                (i: any) => i.intent_code === parsed.intent.id
+                            );
+                            if (matchedIntent?.metadata_schema && Object.keys(matchedIntent.metadata_schema).length > 0) {
+                                const schema = matchedIntent.metadata_schema;
+                                setStaticPayload((prev) => prev ? { ...prev, metadata_schema: schema } : prev);
+                                const initial: Record<string, string> = {};
+                                Object.keys(schema).forEach((key) => { initial[key] = ""; });
+                                setMetadata(initial);
+                            }
+                        }
+                    })
+                    .catch(() => {});
+            } else {
+                // Initialize metadata fields from schema
                 const initial: Record<string, string> = {};
                 Object.keys(parsed.metadata_schema).forEach((key) => {
                     initial[key] = "";
@@ -160,11 +209,19 @@ function ConfirmContent() {
                     `/pay/success?txId=${txId}&amount=${parsedAmount}&intent=${encodeURIComponent(intentLabel)}&recipient=${encodeURIComponent(staticPayload.upa)}`
                 );
             } else {
-                // Offline queue
+                // Enforce offline spending limit
+                if (!canSpendOffline(parsedAmount)) {
+                    const remaining = offlineLimit.maxAmount - offlineLimit.currentUsed;
+                    setError(`Offline limit exceeded. Remaining: NPR ${remaining.toLocaleString()} of NPR ${offlineLimit.maxAmount.toLocaleString()}`);
+                    setProcessing(false);
+                    return;
+                }
+
+                // Offline queue — preserve signature from officer-signed QR
                 await queueTransaction({
                     payload: JSON.stringify(fullPayload),
-                    signature: "",
-                    publicKey: "",
+                    signature: staticPayload.signature || "",
+                    publicKey: staticPayload.publicKey || "",
                     nonce,
                     recipient: staticPayload.upa,
                     amount: parsedAmount,
@@ -174,6 +231,7 @@ function ConfirmContent() {
                 });
 
                 updateBalance(parsedAmount);
+                consumeOfflineLimit(parsedAmount);
                 addTransaction({
                     id: `queued_${Date.now()}`,
                     recipient: staticPayload.upa,
@@ -252,6 +310,38 @@ function ConfirmContent() {
                 {online ? "Online — will settle instantly" : "Offline — will queue for later"}
             </div>
 
+            {/* Offline Spending Limit Bar */}
+            {!online && (
+                <div className="rounded-lg border px-3 py-2 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">Offline Limit</span>
+                        <span className="font-medium">
+                            NPR {offlineLimit.currentUsed.toLocaleString()} / {offlineLimit.maxAmount.toLocaleString()} used
+                        </span>
+                    </div>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div
+                            className={`h-full rounded-full transition-all ${
+                                offlineLimit.currentUsed / offlineLimit.maxAmount > 0.8 ? "bg-destructive" : "bg-primary"
+                            }`}
+                            style={{ width: `${Math.min((offlineLimit.currentUsed / offlineLimit.maxAmount) * 100, 100)}%` }}
+                        />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                        Remaining: NPR {(offlineLimit.maxAmount - offlineLimit.currentUsed).toLocaleString()}
+                    </p>
+                </div>
+            )}
+            {/* Cryptographic Verification Panel (for signed offline QRs) */}
+            {hasSig && (
+                <VerificationPanel
+                    signature={qrSignature}
+                    publicKey={qrPublicKey}
+                    nonce={qrNonce}
+                    timestamp={qrTimestamp}
+                    verified={sigVerified}
+                />
+            )}
             {/* Recipient Info (from QR) */}
             <Card>
                 <CardHeader className="pb-3">

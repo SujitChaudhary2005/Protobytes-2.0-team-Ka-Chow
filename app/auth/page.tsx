@@ -17,7 +17,7 @@ const ROLE_ROUTES: Record<UserRole, string> = {
 
 const ROLE_LABELS: Record<UserRole, string> = {
     citizen: "Citizen Dashboard",
-    officer: "Officer Portal",
+    officer: "Gov Office Portal",
     merchant: "Merchant Dashboard",
     admin: "Gov Admin Panel",
 };

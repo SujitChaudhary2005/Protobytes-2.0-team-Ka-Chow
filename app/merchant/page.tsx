@@ -26,6 +26,7 @@ import {
     Store,
     CreditCard,
     PieChart,
+    Receipt,
 } from "lucide-react";
 import {
     Select,
@@ -183,6 +184,14 @@ function MerchantDashboard() {
         return acc;
     }, {} as Record<string, { count: number; amount: number }>);
 
+    // Tax calculation (Nepal VAT 13%)
+    const VAT_RATE = 0.13;
+    const grossRevenue = stats.totalRevenue;
+    const vatAmount = Math.round(grossRevenue * VAT_RATE / (1 + VAT_RATE));
+    const netRevenue = grossRevenue - vatAmount;
+
+    const [expandedTx, setExpandedTx] = useState<string | null>(null);
+
     return (
         <div className="p-4 md:p-6 space-y-6">
             <div className="flex items-center justify-between">
@@ -270,6 +279,30 @@ function MerchantDashboard() {
                         </Card>
                     )}
 
+                    {/* Tax Summary */}
+                    <Card className="bg-amber-50/50 border-amber-100">
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <Receipt className="h-4 w-4 text-amber-600" /> Tax Summary (VAT 13%)
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="pt-0 space-y-2 text-sm">
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Gross Revenue</span>
+                                <span className="font-medium">{formatCurrency(grossRevenue)}</span>
+                            </div>
+                            <div className="flex justify-between text-red-600">
+                                <span>VAT (13%)</span>
+                                <span className="font-medium">- {formatCurrency(vatAmount)}</span>
+                            </div>
+                            <div className="flex justify-between pt-2 border-t font-bold">
+                                <span>Net Revenue</span>
+                                <span>{formatCurrency(netRevenue)}</span>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground pt-1">Auto-calculated. IRD-ready report.</p>
+                        </CardContent>
+                    </Card>
+
                     {/* Recent Payments */}
                     <Card>
                         <CardHeader className="pb-3"><CardTitle className="text-base">Recent Payments Received</CardTitle></CardHeader>
@@ -281,22 +314,53 @@ function MerchantDashboard() {
                                 </div>
                             ) : (
                                 <div className="space-y-2">
-                                    {merchantTx.slice(0, 10).map((tx) => (
-                                        <div key={tx.id} className="flex items-center justify-between p-3 border rounded-lg">
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 mb-0.5">
-                                                    <p className="font-medium text-sm">{tx.metadata?.payerName || "Customer"}</p>
-                                                    {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
-                                                        : <Clock className="h-3.5 w-3.5 text-warning shrink-0" />}
+                                    {merchantTx.slice(0, 10).map((tx) => {
+                                        const txVat = Math.round(tx.amount * VAT_RATE / (1 + VAT_RATE));
+                                        const txNet = tx.amount - txVat;
+                                        const isExpanded = expandedTx === tx.id;
+                                        return (
+                                            <div key={tx.id} className="border rounded-lg overflow-hidden">
+                                                <div
+                                                    className="flex items-center justify-between p-3 hover:bg-muted/30 transition-colors cursor-pointer"
+                                                    onClick={() => setExpandedTx(isExpanded ? null : tx.id)}
+                                                >
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 mb-0.5">
+                                                            <p className="font-medium text-sm">{tx.metadata?.payerName || "Customer"}</p>
+                                                            {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                                                                : <Clock className="h-3.5 w-3.5 text-warning shrink-0" />}
+                                                        </div>
+                                                        <p className="text-xs text-muted-foreground">{tx.intent} &middot; {formatDate(new Date(tx.timestamp))}</p>
+                                                    </div>
+                                                    <div className="text-right ml-3">
+                                                        <p className="font-semibold text-sm text-success">+{formatCurrency(tx.amount)}</p>
+                                                        <p className="text-xs text-muted-foreground capitalize">{tx.status}</p>
+                                                    </div>
                                                 </div>
-                                                <p className="text-xs text-muted-foreground">{tx.intent} &middot; {formatDate(new Date(tx.timestamp))}</p>
+                                                {isExpanded && (
+                                                    <div className="border-t bg-muted/20 p-3 space-y-1.5 text-xs">
+                                                        <p className="font-medium text-[10px] uppercase tracking-wider text-muted-foreground">Itemized Receipt</p>
+                                                        <div className="flex justify-between">
+                                                            <span>Service: {tx.intent || "Payment"}</span>
+                                                            <span>{formatCurrency(txNet)}</span>
+                                                        </div>
+                                                        <div className="flex justify-between text-muted-foreground">
+                                                            <span>VAT (13%)</span>
+                                                            <span>{formatCurrency(txVat)}</span>
+                                                        </div>
+                                                        <div className="flex justify-between font-bold border-t pt-1">
+                                                            <span>Total</span>
+                                                            <span>{formatCurrency(tx.amount)}</span>
+                                                        </div>
+                                                        <div className="flex justify-between text-muted-foreground pt-1">
+                                                            <span>TX: <span className="font-mono">{(tx.tx_id || tx.id).slice(0, 14)}...</span></span>
+                                                            <span>{tx.mode === "offline" ? <><WifiOff className="h-3 w-3 inline" /> Offline</> : <><Wifi className="h-3 w-3 inline" /> Online</>}</span>
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
-                                            <div className="text-right ml-3">
-                                                <p className="font-semibold text-sm text-success">+{formatCurrency(tx.amount)}</p>
-                                                <p className="text-xs text-muted-foreground capitalize">{tx.status}</p>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </CardContent>
@@ -363,7 +427,7 @@ function MerchantDashboard() {
                                     {uploading && !qrImageUrl && <p className="text-xs text-muted-foreground text-center">Saving to cloud...</p>}
                                     {qrImageUrl && (
                                         <div className="text-center space-y-1">
-                                            <p className="text-xs text-success">✓ Stored in cloud</p>
+                                            <p className="text-xs text-success flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Stored in cloud</p>
                                             <a href={qrImageUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary underline break-all">Open QR Image</a>
                                         </div>
                                     )}

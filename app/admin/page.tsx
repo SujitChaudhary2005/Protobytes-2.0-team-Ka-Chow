@@ -8,6 +8,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { getTransactions, Transaction } from "@/lib/storage";
 import { toast } from "sonner";
 import { RouteGuard } from "@/components/route-guard";
+import { useAutoSync } from "@/hooks/use-auto-sync";
 import {
     TrendingUp,
     DollarSign,
@@ -29,6 +30,11 @@ import {
     Users,
     CreditCard,
     RefreshCw,
+    Smartphone,
+    Store,
+    Receipt,
+    IdCard,
+    Coins,
 } from "lucide-react";
 
 export default function AdminPageWrapper() {
@@ -40,6 +46,7 @@ export default function AdminPageWrapper() {
 }
 
 function AdminDashboard() {
+    useAutoSync(); // Auto-sync queued offline payments when coming back online
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<"all" | "settled" | "pending" | "failed">("all");
@@ -47,11 +54,16 @@ function AdminDashboard() {
     const [reconciling, setReconciling] = useState(false);
     const [reconReport, setReconReport] = useState<any>(null);
 
+    // UPA ID lookup state
+    const [upaLookupQuery, setUpaLookupQuery] = useState("");
+    const [lookupResults, setLookupResults] = useState<Transaction[]>([]);
+    const [lookupLoading, setLookupLoading] = useState(false);
+    const [lookupFilter, setLookupFilter] = useState<"all" | "settled" | "pending" | "failed">("all");
+    const [hasSearched, setHasSearched] = useState(false);
+
     useEffect(() => {
         const load = async () => { setLoading(true); await loadTransactions(); setLoading(false); };
         load();
-        const interval = setInterval(loadTransactions, 5000);
-        return () => clearInterval(interval);
     }, []);
 
     const loadTransactions = async () => {
@@ -91,6 +103,49 @@ function AdminDashboard() {
         return true;
     });
 
+    // Lookup transactions by UPA ID
+    const handleUpaLookup = async () => {
+        if (!upaLookupQuery.trim()) { toast.error("Please enter a UPA ID to search"); return; }
+        setLookupLoading(true);
+        setHasSearched(true);
+        try {
+            const res = await fetch(`/api/transactions?upa_id=${encodeURIComponent(upaLookupQuery.trim())}`);
+            if (res.ok) {
+                const result = await res.json();
+                if (result.data && Array.isArray(result.data)) {
+                    setLookupResults(result.data.map((tx: any) => ({
+                        id: tx.id || tx.tx_id,
+                        recipient: tx.recipient || tx.upa_address || tx.upa_id || "",
+                        recipientName: tx.recipientName || tx.entity_name || "",
+                        amount: tx.amount,
+                        intent: tx.intent || tx.intent_label || "",
+                        metadata: tx.metadata || {},
+                        status: tx.status,
+                        mode: tx.mode || "online",
+                        signature: tx.signature,
+                        publicKey: tx.publicKey,
+                        timestamp: tx.timestamp || new Date(tx.issued_at || tx.created_at || Date.now()).getTime(),
+                        nonce: tx.nonce,
+                        walletProvider: tx.walletProvider || tx.wallet_provider,
+                    })));
+                } else { setLookupResults([]); }
+            } else { setLookupResults([]); toast.error("Failed to fetch"); }
+        } catch { setLookupResults([]); toast.error("Lookup failed"); }
+        finally { setLookupLoading(false); }
+    };
+
+    const filteredLookupResults = lookupResults.filter((tx) => {
+        if (lookupFilter !== "all" && tx.status !== lookupFilter) return false;
+        return true;
+    });
+
+    const lookupStats = {
+        total: lookupResults.length,
+        settled: lookupResults.filter(t => t.status === "settled").length,
+        pending: lookupResults.filter(t => t.status === "pending" || t.status === "queued").length,
+        totalAmount: lookupResults.filter(t => t.status === "settled").reduce((s, t) => s + t.amount, 0),
+    };
+
     const stats = {
         total: transactions.length,
         settled: transactions.filter((t) => t.status === "settled").length,
@@ -126,6 +181,44 @@ function AdminDashboard() {
 
     const reconciliationRate = stats.total > 0 ? Math.round((stats.settled / stats.total) * 100) : 100;
 
+    // Group by tx_type
+    const txTypeGroups = transactions.reduce((acc, tx) => {
+        const type = (tx as any).tx_type || "payment";
+        if (!acc[type]) acc[type] = { count: 0, amount: 0 };
+        acc[type].count++;
+        acc[type].amount += tx.amount;
+        return acc;
+    }, {} as Record<string, { count: number; amount: number }>);
+
+    const TX_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+        payment: { label: "QR Payments", icon: <Smartphone className="h-5 w-5 text-blue-500" />, color: "bg-blue-500" },
+        merchant_purchase: { label: "Merchant", icon: <Store className="h-5 w-5 text-green-500" />, color: "bg-green-500" },
+        c2c: { label: "C2C Transfers", icon: <Users className="h-5 w-5 text-purple-500" />, color: "bg-purple-500" },
+        bill_payment: { label: "Bill Payments", icon: <Receipt className="h-5 w-5 text-amber-500" />, color: "bg-amber-500" },
+        nid_payment: { label: "NID/NFC", icon: <IdCard className="h-5 w-5 text-red-500" />, color: "bg-red-500" },
+    };
+
+    // Mock ministry allocation (derived from transaction data)
+    const ministryAllocation = [
+        { name: "Ministry of Finance", share: 35, amount: Math.round(stats.totalRevenue * 0.35) },
+        { name: "Ministry of Energy", share: 25, amount: Math.round(stats.totalRevenue * 0.25) },
+        { name: "Local Government", share: 20, amount: Math.round(stats.totalRevenue * 0.20) },
+        { name: "Ministry of Communication", share: 12, amount: Math.round(stats.totalRevenue * 0.12) },
+        { name: "Others", share: 8, amount: Math.round(stats.totalRevenue * 0.08) },
+    ];
+
+    // Revenue periods
+    const now = new Date();
+    const monthRevenue = transactions.filter(t => {
+        const d = new Date(t.timestamp);
+        return t.status === "settled" && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).reduce((s, t) => s + t.amount, 0);
+
+    const yearRevenue = transactions.filter(t => {
+        const d = new Date(t.timestamp);
+        return t.status === "settled" && d.getFullYear() === now.getFullYear();
+    }).reduce((s, t) => s + t.amount, 0);
+
     return (
         <div className="p-4 md:p-6 space-y-6">
             {/* Header */}
@@ -137,7 +230,21 @@ function AdminDashboard() {
                     <p className="text-sm text-muted-foreground">National UPA Payment Oversight & Reconciliation</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm"><Download className="h-4 w-4 mr-2" /> Export</Button>
+                    <Button variant="outline" size="sm" onClick={() => {
+                        if (transactions.length === 0) { toast.error("No transactions to export"); return; }
+                        const headers = ["Tx ID", "Recipient", "Amount", "Intent", "Status", "Mode", "Date"];
+                        const rows = transactions.map(t => [
+                            t.id, t.recipient || "", t.amount, t.intent || "", t.status, t.mode || "online",
+                            new Date(t.timestamp).toISOString()
+                        ]);
+                        const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+                        const blob = new Blob([csv], { type: "text/csv" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url; a.download = `upa-transactions-${Date.now()}.csv`; a.click();
+                        URL.revokeObjectURL(url);
+                        toast.success(`Exported ${transactions.length} transactions`);
+                    }}><Download className="h-4 w-4 mr-2" /> Export</Button>
                     <Button onClick={loadTransactions} disabled={loading} size="sm">
                         <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Refresh
                     </Button>
@@ -275,6 +382,82 @@ function AdminDashboard() {
                 </CardContent>
             </Card>
 
+            {/* Revenue Time Periods */}
+            <div className="grid gap-4 md:grid-cols-3">
+                <Card className="bg-green-50/50 border-green-100">
+                    <CardContent className="p-4 text-center">
+                        <p className="text-xs text-muted-foreground mb-1">Today</p>
+                        <p className="text-xl font-bold text-green-700">{formatCurrency(stats.todayRevenue)}</p>
+                    </CardContent>
+                </Card>
+                <Card className="bg-blue-50/50 border-blue-100">
+                    <CardContent className="p-4 text-center">
+                        <p className="text-xs text-muted-foreground mb-1">This Month</p>
+                        <p className="text-xl font-bold text-blue-700">{formatCurrency(monthRevenue)}</p>
+                    </CardContent>
+                </Card>
+                <Card className="bg-purple-50/50 border-purple-100">
+                    <CardContent className="p-4 text-center">
+                        <p className="text-xs text-muted-foreground mb-1">This Year</p>
+                        <p className="text-xl font-bold text-purple-700">{formatCurrency(yearRevenue)}</p>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Transaction Type Breakdown + Ministry Allocation */}
+            <div className="grid gap-4 md:grid-cols-2">
+                <Card>
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <BarChart3 className="h-4 w-4 text-primary" /> Transaction Type Breakdown
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2.5">
+                        {Object.entries(txTypeGroups).sort((a, b) => b[1].amount - a[1].amount).map(([type, data]) => {
+                            const info = TX_TYPE_LABELS[type] || { label: type, icon: <Coins className="h-5 w-5 text-gray-500" />, color: "bg-gray-500" };
+                            const pct = stats.totalRevenue > 0 ? Math.round((data.amount / stats.totalRevenue) * 100) : 0;
+                            return (
+                                <div key={type} className="flex items-center gap-3 p-2 bg-muted/30 rounded-lg">
+                                    {info.icon}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center justify-between mb-1">
+                                            <span className="text-sm font-medium">{info.label}</span>
+                                            <span className="text-sm font-bold">{formatCurrency(data.amount)}</span>
+                                        </div>
+                                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                            <div className={`${info.color} h-1.5 rounded-full`} style={{ width: `${pct}%` }} />
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">{data.count} transactions &middot; {pct}%</p>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {Object.keys(txTypeGroups).length === 0 && (
+                            <p className="text-sm text-muted-foreground text-center py-4">No transaction data</p>
+                        )}
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <Building2 className="h-4 w-4 text-primary" /> Ministry Allocation
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2.5">
+                        {ministryAllocation.map((m) => (
+                            <div key={m.name} className="flex items-center justify-between p-2 border rounded-lg">
+                                <div>
+                                    <p className="text-sm font-medium">{m.name}</p>
+                                    <p className="text-xs text-muted-foreground">{m.share}% allocation</p>
+                                </div>
+                                <p className="text-sm font-bold">{formatCurrency(m.amount)}</p>
+                            </div>
+                        ))}
+                    </CardContent>
+                </Card>
+            </div>
+
             {/* Ledger Reconciliation */}
             <Card>
                 <CardHeader>
@@ -345,60 +528,131 @@ function AdminDashboard() {
                 </CardContent>
             </Card>
 
-            {/* All Transactions */}
+            {/* Transaction Lookup by UPA ID */}
             <Card>
                 <CardHeader>
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                        <CardTitle className="text-base">All National Transactions</CardTitle>
-                        <div className="flex flex-col sm:flex-row gap-2">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                <Input placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 w-full sm:w-56" />
-                            </div>
-                            <div className="flex gap-1.5">
-                                {(["all", "settled", "pending", "failed"] as const).map((f) => (
-                                    <Button key={f} variant={filter === f ? "default" : "outline"} size="sm" onClick={() => setFilter(f)}>
-                                        {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
-                                    </Button>
-                                ))}
-                            </div>
+                        <div>
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <Search className="h-4 w-4 text-primary" /> Transaction Lookup by UPA ID
+                            </CardTitle>
+                            <p className="text-xs text-muted-foreground mt-1">Enter a UPA address to view transactions for a specific entity</p>
                         </div>
                     </div>
                 </CardHeader>
-                <CardContent>
-                    {loading ? (
-                        <div className="text-center py-10 text-muted-foreground"><Activity className="h-6 w-6 animate-spin mx-auto mb-2" /> Loading...</div>
-                    ) : filteredTransactions.length === 0 ? (
-                        <div className="text-center py-10 text-muted-foreground"><p className="text-sm">No transactions found</p></div>
-                    ) : (
-                        <div className="space-y-2">
-                            {filteredTransactions.map((tx) => (
-                                <div key={tx.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors">
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-0.5">
-                                            <p className="font-medium text-sm">{tx.intent}</p>
-                                            {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
-                                                : tx.status === "pending" || tx.status === "queued" ? <Clock className="h-3.5 w-3.5 text-warning shrink-0" />
-                                                : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tx.status === "settled" ? "bg-success/10 text-success" : tx.status === "pending" || tx.status === "queued" ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger"}`}>{tx.status}</span>
-                                        </div>
-                                        <p className="text-xs text-muted-foreground truncate">{tx.recipientName || tx.recipient}</p>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <span className="text-xs text-muted-foreground">{formatDate(new Date(tx.timestamp))}</span>
-                                            <span className="text-xs text-muted-foreground font-mono">{tx.id.slice(0, 10)}...</span>
-                                            {tx.mode === "offline" ? (
-                                                <span className="inline-flex items-center gap-0.5 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded-full"><WifiOff className="h-2.5 w-2.5" /> Offline</span>
-                                            ) : (
-                                                <span className="inline-flex items-center gap-0.5 text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded-full"><Wifi className="h-2.5 w-2.5" /> Online</span>
-                                            )}
-                                        </div>
+                <CardContent className="space-y-4">
+                    {/* Search Bar */}
+                    <div className="flex gap-2">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                placeholder="e.g. traffic@nepal.gov, revenue@lalitpur.gov.np ..."
+                                value={upaLookupQuery}
+                                onChange={(e) => setUpaLookupQuery(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleUpaLookup(); }}
+                                className="pl-9"
+                            />
+                        </div>
+                        <Button onClick={handleUpaLookup} disabled={lookupLoading}>
+                            {lookupLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+                            Search
+                        </Button>
+                    </div>
+
+                    {/* Quick UPA ID suggestions */}
+                    <div className="flex flex-wrap gap-1.5">
+                        <span className="text-xs text-muted-foreground mr-1 self-center">Quick:</span>
+                        {["traffic@nepal.gov", "revenue@lalitpur.gov.np", "fee@tribhuvan.edu.np", "license@dotm.gov.np", "ward5@kathmandu.gov.np"].map((upa) => (
+                            <Button key={upa} variant="outline" size="sm" className="text-xs h-7 px-2" onClick={() => { setUpaLookupQuery(upa); }}>
+                                {upa}
+                            </Button>
+                        ))}
+                    </div>
+
+                    {/* Results */}
+                    {hasSearched && (
+                        <>
+                            {/* Lookup summary */}
+                            {lookupResults.length > 0 && (
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <div className="bg-primary/5 border border-primary/10 rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold">{lookupStats.total}</p>
+                                        <p className="text-[10px] text-muted-foreground">Transactions</p>
                                     </div>
-                                    <div className="mt-2 sm:mt-0 sm:text-right ml-3">
-                                        <p className="font-bold text-sm">{formatCurrency(tx.amount)}</p>
-                                        {tx.walletProvider && <p className="text-xs text-muted-foreground">{tx.walletProvider}</p>}
+                                    <div className="bg-success/5 border border-success/10 rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-success">{lookupStats.settled}</p>
+                                        <p className="text-[10px] text-muted-foreground">Settled</p>
+                                    </div>
+                                    <div className="bg-warning/5 border border-warning/10 rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-warning">{lookupStats.pending}</p>
+                                        <p className="text-[10px] text-muted-foreground">Pending</p>
+                                    </div>
+                                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-blue-700">{formatCurrency(lookupStats.totalAmount)}</p>
+                                        <p className="text-[10px] text-muted-foreground">Revenue</p>
                                     </div>
                                 </div>
-                            ))}
+                            )}
+
+                            {/* Status filter */}
+                            {lookupResults.length > 0 && (
+                                <div className="flex gap-1.5">
+                                    {(["all", "settled", "pending", "failed"] as const).map((f) => (
+                                        <Button key={f} variant={lookupFilter === f ? "default" : "outline"} size="sm" onClick={() => setLookupFilter(f)}>
+                                            {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
+                                        </Button>
+                                    ))}
+                                </div>
+                            )}
+
+                            {lookupLoading ? (
+                                <div className="text-center py-10 text-muted-foreground"><Activity className="h-6 w-6 animate-spin mx-auto mb-2" /> Searching...</div>
+                            ) : filteredLookupResults.length === 0 ? (
+                                <div className="text-center py-10 text-muted-foreground">
+                                    <Search className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                                    <p className="text-sm">No transactions found for &quot;{upaLookupQuery}&quot;</p>
+                                    <p className="text-xs mt-1">Try a different UPA ID or check the address</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {filteredLookupResults.map((tx) => (
+                                        <div key={tx.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-0.5">
+                                                    <p className="font-medium text-sm">{tx.intent}</p>
+                                                    {tx.status === "settled" ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                                                        : tx.status === "pending" || tx.status === "queued" ? <Clock className="h-3.5 w-3.5 text-warning shrink-0" />
+                                                        : <XCircle className="h-3.5 w-3.5 text-danger shrink-0" />}
+                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tx.status === "settled" ? "bg-success/10 text-success" : tx.status === "pending" || tx.status === "queued" ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger"}`}>{tx.status}</span>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground truncate">{tx.recipientName || tx.recipient}</p>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <span className="text-xs text-muted-foreground">{formatDate(new Date(tx.timestamp))}</span>
+                                                    <span className="text-xs text-muted-foreground font-mono">{tx.id.slice(0, 10)}...</span>
+                                                    {tx.mode === "offline" ? (
+                                                        <span className="inline-flex items-center gap-0.5 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded-full"><WifiOff className="h-2.5 w-2.5" /> Offline</span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-0.5 text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded-full"><Wifi className="h-2.5 w-2.5" /> Online</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="mt-2 sm:mt-0 sm:text-right ml-3">
+                                                <p className="font-bold text-sm">{formatCurrency(tx.amount)}</p>
+                                                {tx.walletProvider && <p className="text-xs text-muted-foreground">{tx.walletProvider}</p>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {/* Initial state - no search yet */}
+                    {!hasSearched && (
+                        <div className="text-center py-10 text-muted-foreground">
+                            <Search className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                            <p className="text-sm font-medium">Enter a UPA ID to look up transactions</p>
+                            <p className="text-xs mt-1">Search by entity UPA address to view their payment history</p>
                         </div>
                     )}
                 </CardContent>

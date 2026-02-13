@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { useNetwork } from "@/hooks/use-network";
 import { RouteGuard } from "@/components/route-guard";
-import { Camera, Search, Keyboard, XCircle, Loader2 } from "lucide-react";
+import { Camera, Search, Keyboard, XCircle, Loader2, ClipboardPaste } from "lucide-react";
 import type { UPA } from "@/types";
 
 export default function ScanPageWrapper() {
@@ -42,6 +42,7 @@ function ScanPage() {
 
     const scannerRef = useRef<any>(null);
     const scannerContainerId = "qr-reader";
+    const [pasteData, setPasteData] = useState("");
 
     // Load all UPAs for lookup
     useEffect(() => {
@@ -240,6 +241,36 @@ function ScanPage() {
                             </Button>
                         </div>
                     )}
+                </CardContent>
+            </Card>
+
+            {/* Paste QR Data Fallback */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                        <ClipboardPaste className="h-4 w-4" />
+                        Paste QR Data
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                        If camera scanning doesn&apos;t work, paste the QR JSON data here
+                    </p>
+                    <textarea
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-[80px] font-mono"
+                        placeholder='{"version":"1.0","upa":"traffic@nepal.gov",...}'
+                        value={pasteData}
+                        onChange={(e) => setPasteData(e.target.value)}
+                    />
+                    <Button
+                        className="w-full"
+                        variant="outline"
+                        disabled={!pasteData.trim()}
+                        onClick={() => handleScannedData(pasteData.trim())}
+                    >
+                        <ClipboardPaste className="h-4 w-4 mr-2" />
+                        Submit QR Data
+                    </Button>
                 </CardContent>
             </Card>
 

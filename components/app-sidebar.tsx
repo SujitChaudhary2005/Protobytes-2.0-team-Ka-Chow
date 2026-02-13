@@ -52,7 +52,7 @@ const navItems: NavItem[] = [
         roles: ["citizen"],
     },
     {
-        title: "Officer Portal",
+        title: "Gov Office Portal",
         url: "/officer",
         icon: QrCode,
         roles: ["officer"],

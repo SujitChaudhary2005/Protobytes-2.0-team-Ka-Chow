@@ -101,7 +101,8 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
                             <div className="grid grid-cols-2 gap-2 text-xs">
                                 {[
                                     { label: "Citizen", email: "citizen@demo.np", pass: "citizen123" },
-                                    { label: "Officer", email: "officer@demo.np", pass: "officer123" },
+                                    { label: "Citizen 2", email: "citizen2@demo.np", pass: "citizen123" },
+                                    { label: "Gov Officer", email: "officer@demo.np", pass: "officer123" },
                                     { label: "Merchant", email: "merchant@demo.np", pass: "merchant123" },
                                     { label: "Gov Admin", email: "admin@demo.np", pass: "admin123" },
                                 ].map((demo) => (

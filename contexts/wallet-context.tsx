@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { Wallet, Transaction, UserRole, AppUser, MerchantProfile } from "@/types";
+import { Wallet, Transaction, UserRole, AppUser, MerchantProfile, NIDCard, BankAccount, OfflineLimit, MOCK_NID_DATABASE } from "@/types";
 import { generateKeyPair, keyToHex } from "@/lib/crypto";
 import { SecureKeyStore } from "@/lib/secure-storage";
 
@@ -31,12 +31,26 @@ interface WalletContextType {
     user: AppUser | null;
     role: UserRole | null;
     merchantProfile: MerchantProfile | null;
+    // NID & Bank
+    nid: NIDCard | null;
+    linkedBank: BankAccount | null;
+    // Offline limits
+    offlineLimit: OfflineLimit;
+    // Actions
     initializeWallet: () => void;
     addTransaction: (transaction: Transaction) => void;
     updateBalance: (amount: number) => void;
     login: (email: string, password: string) => Promise<boolean>;
     logout: () => void;
     registerMerchant: (profile: Omit<MerchantProfile, "id" | "upaAddress" | "registeredAt" | "ownerId">) => MerchantProfile;
+    // New actions
+    linkNID: (nidNumber: string) => NIDCard | null;
+    linkBank: (bank: BankAccount) => void;
+    setOfflineLimit: (limit: number) => void;
+    useOfflineLimit: (amount: number) => boolean;
+    resetOfflineLimit: () => void;
+    canSpendOffline: (amount: number) => boolean;
+    deductFromBank: (amount: number) => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -50,6 +64,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const [mounted, setMounted] = useState(false);
     const [user, setUser] = useState<AppUser | null>(null);
     const [merchantProfile, setMerchantProfile] = useState<MerchantProfile | null>(null);
+    const [nid, setNid] = useState<NIDCard | null>(null);
+    const [linkedBank, setLinkedBank] = useState<BankAccount | null>(null);
+    const [offlineLimit, setOfflineLimitState] = useState<OfflineLimit>({
+        maxAmount: 5000,
+        currentUsed: 0,
+        lastReset: Date.now(),
+    });
 
     // Load wallet on mount, migrating old keys to secure storage
     useEffect(() => {
@@ -83,6 +104,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             const storedMerchant = localStorage.getItem("upa_merchant_profile");
             if (storedMerchant) {
                 try { setMerchantProfile(JSON.parse(storedMerchant)); } catch { /* ignore */ }
+            }
+
+            // Load NID
+            const storedNid = localStorage.getItem("upa_nid");
+            if (storedNid) {
+                try { setNid(JSON.parse(storedNid)); } catch { /* ignore */ }
+            }
+
+            // Load linked bank
+            const storedBank = localStorage.getItem("upa_linked_bank");
+            if (storedBank) {
+                try { setLinkedBank(JSON.parse(storedBank)); } catch { /* ignore */ }
+            }
+
+            // Load offline limit
+            const storedLimit = localStorage.getItem("upa_offline_limit");
+            if (storedLimit) {
+                try { setOfflineLimitState(JSON.parse(storedLimit)); } catch { /* ignore */ }
             }
 
             // Load wallet
@@ -223,12 +262,85 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         return newProfile;
     }, [user]);
 
+    /**
+     * Link National ID — look up in mock database
+     */
+    const linkNID = useCallback((nidNumber: string): NIDCard | null => {
+        const found = MOCK_NID_DATABASE.find(n => n.nidNumber === nidNumber);
+        if (!found) return null;
+        setNid(found);
+        localStorage.setItem("upa_nid", JSON.stringify(found));
+        // Auto-link primary bank
+        if (found.linkedBanks.length > 0) {
+            const primary = found.linkedBanks.find(b => b.isPrimary) || found.linkedBanks[0];
+            setLinkedBank(primary);
+            localStorage.setItem("upa_linked_bank", JSON.stringify(primary));
+        }
+        return found;
+    }, []);
+
+    /**
+     * Link a bank account
+     */
+    const linkBank = useCallback((bank: BankAccount) => {
+        setLinkedBank(bank);
+        localStorage.setItem("upa_linked_bank", JSON.stringify(bank));
+    }, []);
+
+    /**
+     * Set offline spending limit
+     */
+    const setOfflineLimit = useCallback((limit: number) => {
+        const newLimit: OfflineLimit = { maxAmount: limit, currentUsed: offlineLimit.currentUsed, lastReset: offlineLimit.lastReset };
+        setOfflineLimitState(newLimit);
+        localStorage.setItem("upa_offline_limit", JSON.stringify(newLimit));
+    }, [offlineLimit]);
+
+    /**
+     * Check if amount is within offline spending limit
+     */
+    const canSpendOffline = useCallback((amount: number): boolean => {
+        return amount <= (offlineLimit.maxAmount - offlineLimit.currentUsed);
+    }, [offlineLimit]);
+
+    /**
+     * Use offline limit — returns true if success, false if exceeded
+     */
+    const useOfflineLimit = useCallback((amount: number): boolean => {
+        if (!canSpendOffline(amount)) return false;
+        const newLimit: OfflineLimit = { ...offlineLimit, currentUsed: offlineLimit.currentUsed + amount };
+        setOfflineLimitState(newLimit);
+        localStorage.setItem("upa_offline_limit", JSON.stringify(newLimit));
+        return true;
+    }, [offlineLimit, canSpendOffline]);
+
+    /**
+     * Reset offline limit usage (on sync complete)
+     */
+    const resetOfflineLimit = useCallback(() => {
+        const newLimit: OfflineLimit = { maxAmount: offlineLimit.maxAmount, currentUsed: 0, lastReset: Date.now() };
+        setOfflineLimitState(newLimit);
+        localStorage.setItem("upa_offline_limit", JSON.stringify(newLimit));
+    }, [offlineLimit.maxAmount]);
+
+    /**
+     * Mock deduct from bank (NID-linked bank payment)
+     */
+    const deductFromBank = useCallback((amount: number) => {
+        // In production: call bank API. For demo: just log.
+        console.log(`[Bank Gateway] Deducted NPR ${amount} from ${linkedBank?.bankName ?? "unknown"} (${linkedBank?.accountNumber})`);
+    }, [linkedBank]);
+
     const logout = useCallback(() => {
         localStorage.removeItem("upa_auth_session");
         localStorage.removeItem("upa_merchant_profile");
+        localStorage.removeItem("upa_nid");
+        localStorage.removeItem("upa_linked_bank");
         setIsAuthenticated(false);
         setUser(null);
         setMerchantProfile(null);
+        setNid(null);
+        setLinkedBank(null);
     }, []);
 
     return (
@@ -242,12 +354,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 user,
                 role: user?.role ?? null,
                 merchantProfile,
+                nid,
+                linkedBank,
+                offlineLimit,
                 initializeWallet,
                 addTransaction,
                 updateBalance,
                 login,
                 logout,
                 registerMerchant,
+                linkNID,
+                linkBank,
+                setOfflineLimit,
+                useOfflineLimit,
+                resetOfflineLimit,
+                canSpendOffline,
+                deductFromBank,
             }}
         >
             {children}

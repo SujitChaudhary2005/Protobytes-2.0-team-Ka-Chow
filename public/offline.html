@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#2563EB" />
+    <title>UPA Pay - Offline</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #fafafa;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            text-align: center;
+        }
+        .icon {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 1.5rem;
+            border-radius: 20px;
+            background: linear-gradient(135deg, #2563EB, #1d4ed8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+        }
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+        p {
+            color: #a1a1aa;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            max-width: 320px;
+            margin-bottom: 1.5rem;
+        }
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 999px;
+            background: #1c1c1e;
+            border: 1px solid #2a2a2e;
+            font-size: 0.85rem;
+            color: #f59e0b;
+            margin-bottom: 2rem;
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #f59e0b;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        button {
+            padding: 0.75rem 2rem;
+            border-radius: 12px;
+            border: none;
+            background: #2563EB;
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:active { background: #1d4ed8; }
+        .info {
+            margin-top: 2rem;
+            padding: 1rem;
+            border-radius: 12px;
+            background: #1c1c1e;
+            border: 1px solid #2a2a2e;
+            max-width: 320px;
+        }
+        .info p {
+            font-size: 0.8rem;
+            color: #71717a;
+            margin-bottom: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="icon">💳</div>
+    <h1>UPA Pay</h1>
+    <div class="status">
+        <span class="dot"></span>
+        Offline Mode
+    </div>
+    <p>You're currently offline. Please connect to the internet and try again. Your queued payments will sync automatically when you're back online.</p>
+    <button onclick="window.location.reload()">Retry Connection</button>
+    <div class="info">
+        <p>Tip: Open the app while online first to enable full offline mode. Cached pages will then work without internet.</p>
+    </div>
+</body>
+</html>

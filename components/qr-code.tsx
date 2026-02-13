@@ -24,7 +24,7 @@ export function QRCodeDisplay({ value, size = 256, className, onRendered }: QRCo
             QRCode.toCanvas(canvasRef.current, value, {
                 width: size,
                 margin: 2,
-                errorCorrectionLevel: "H",
+                errorCorrectionLevel: "M",
                 color: {
                     dark: "#000000",
                     light: "#FFFFFF",

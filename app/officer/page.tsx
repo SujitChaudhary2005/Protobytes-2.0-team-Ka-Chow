@@ -9,6 +9,10 @@ import { toast } from "sonner";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Transaction } from "@/types";
 import { RouteGuard } from "@/components/route-guard";
+import { signPayload, generateNonce, hexToKey, getPublicKeyHex } from "@/lib/crypto";
+import { SecureKeyStore } from "@/lib/secure-storage";
+import { useNetwork } from "@/hooks/use-network";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
     QrCode,
     Download,
@@ -22,6 +26,9 @@ import {
     WifiOff,
     TrendingUp,
     Users,
+    Lock,
+    ShieldCheck,
+    Loader2,
 } from "lucide-react";
 import {
     Select,
@@ -41,6 +48,7 @@ export default function OfficerPageWrapper() {
 }
 
 function OfficerPage() {
+    const { online } = useNetwork();
     const [upas, setUpas] = useState<UPA[]>([]);
     const [selectedUpa, setSelectedUpa] = useState<UPA | null>(null);
     const [selectedIntentCode, setSelectedIntentCode] = useState<string>("");
@@ -51,19 +59,49 @@ function OfficerPage() {
     const [activeTab, setActiveTab] = useState<"qr" | "collections">("qr");
     const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
+    const [isOfflineMode, setIsOfflineMode] = useState(false);
+    const [signing, setSigning] = useState(false);
+    const [showUpaSelection, setShowUpaSelection] = useState(false);
 
     const selectedIntent = selectedUpa?.intents.find((i) => i.intent_code === selectedIntentCode) || null;
+
+    // Load stored QR image from Supabase when entity+intent changes
+    useEffect(() => {
+        if (!selectedUpa || !selectedIntentCode) return;
+        setQrImageUrl(null);
+        fetch(`/api/qr/upload?upa=${encodeURIComponent(selectedUpa.address)}&intent=${encodeURIComponent(selectedIntentCode)}`)
+            .then((r) => r.json())
+            .then((res) => {
+                if (res.exists && res.url) {
+                    setQrImageUrl(res.url);
+                }
+            })
+            .catch(() => {});
+    }, [selectedUpa, selectedIntentCode]);
 
     useEffect(() => {
         fetch("/api/upas")
             .then((r) => r.json())
             .then((res) => {
                 setUpas(res.data || []);
-                if (res.data?.[0]) {
-                    setSelectedUpa(res.data[0]);
-                    if (res.data[0].intents?.[0]) {
-                        setSelectedIntentCode(res.data[0].intents[0].intent_code);
+                
+                // Check if officer has previously selected a UPA
+                const storedUpaAddress = localStorage.getItem("upa_officer_selected_office");
+                
+                if (storedUpaAddress) {
+                    const storedUpa = res.data?.find((u: UPA) => u.address === storedUpaAddress);
+                    if (storedUpa) {
+                        setSelectedUpa(storedUpa);
+                        if (storedUpa.intents?.[0]) {
+                            setSelectedIntentCode(storedUpa.intents[0].intent_code);
+                        }
+                        return;
                     }
+                }
+                
+                // First time login - show selection dialog
+                if (res.data && res.data.length > 0) {
+                    setShowUpaSelection(true);
                 }
             })
             .catch(console.error);
@@ -108,20 +146,32 @@ function OfficerPage() {
         return () => clearInterval(interval);
     }, [loadTransactions]);
 
-    const handleUpaSelect = (address: string) => {
+    const handleUpaSelect = (address: string, saveToStorage = false) => {
         const upa = upas.find((u) => u.address === address);
         if (upa) {
             setSelectedUpa(upa);
             setSelectedIntentCode(upa.intents?.[0]?.intent_code || "");
             setQrData(null);
+            if (saveToStorage) {
+                localStorage.setItem("upa_officer_selected_office", address);
+            }
         }
     };
+    
+    const handleInitialUpaSelection = (address: string) => {
+        handleUpaSelect(address, true);
+        setShowUpaSelection(false);
+        toast.success("Gov Office Selected", {
+            description: `You are now managing ${upas.find(u => u.address === address)?.entity_name}`
+        });
+    };
 
-    const handleGenerateQR = () => {
+    const handleGenerateQR = async () => {
         if (!selectedUpa || !selectedIntent) {
             toast.error("Missing Selection", { description: "Please select an entity and payment type" });
             return;
         }
+        // Build compact payload — strip metadata_schema to keep QR small & scannable
         const payload: StaticQRPayload = {
             version: "1.0",
             upa: selectedUpa.address,
@@ -129,16 +179,56 @@ function OfficerPage() {
             intent: { id: selectedIntent.intent_code, category: selectedIntent.category, label: selectedIntent.label },
             amount_type: selectedIntent.amount_type,
             currency: "NPR",
-            metadata_schema: selectedIntent.metadata_schema || {},
+            metadata_schema: {},
         };
         if (selectedIntent.amount_type === "fixed") payload.amount = selectedIntent.fixed_amount!;
         else if (selectedIntent.amount_type === "range") {
             payload.min_amount = selectedIntent.min_amount!;
             payload.max_amount = selectedIntent.max_amount!;
         }
-        setQrData(JSON.stringify(payload));
-        setQrImageUrl(null);
-        toast.success("QR Code Generated");
+
+        if (isOfflineMode) {
+            // Sign the payload with officer's Ed25519 private key
+            setSigning(true);
+            try {
+                const privateKeyHex = await SecureKeyStore.get("upa_private_key");
+                if (!privateKeyHex) {
+                    toast.error("No signing key found", { description: "Please ensure your wallet is initialized" });
+                    setSigning(false);
+                    return;
+                }
+                const privateKey = hexToKey(privateKeyHex);
+                const nonce = generateNonce();
+                const now = new Date();
+                const signablePayload = {
+                    ...payload,
+                    nonce,
+                    issuedAt: now.toISOString(),
+                    expiresAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+                };
+                const signature = signPayload(signablePayload, privateKey);
+                const publicKey = getPublicKeyHex(privateKey);
+                const signedPayload: StaticQRPayload = {
+                    ...signablePayload,
+                    signature,
+                    publicKey,
+                    signed: true,
+                };
+                setQrData(JSON.stringify(signedPayload));
+                setQrImageUrl(null);
+                toast.success("Signed Offline QR Generated", {
+                    description: "Ed25519 cryptographic signature applied",
+                });
+            } catch (err: any) {
+                toast.error("Signing failed", { description: err.message || "Could not sign payload" });
+            } finally {
+                setSigning(false);
+            }
+        } else {
+            setQrData(JSON.stringify(payload));
+            setQrImageUrl(null);
+            toast.success("QR Code Generated");
+        }
     };
 
     const handleQRRendered = async (dataUrl: string) => {
@@ -192,8 +282,35 @@ function OfficerPage() {
 
     return (
         <div className="p-4 md:p-6 space-y-6">
+            {/* Initial UPA Selection Dialog */}
+            <Dialog open={showUpaSelection} onOpenChange={setShowUpaSelection}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Select Your Government Office</DialogTitle>
+                        <DialogDescription>
+                            Choose which government office you are managing. This will be your default office.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 mt-4">
+                        {upas.map((upa) => (
+                            <button
+                                key={upa.address}
+                                onClick={() => handleInitialUpaSelection(upa.address)}
+                                className="w-full text-left p-4 border rounded-lg hover:bg-muted transition-colors"
+                            >
+                                <p className="font-semibold">{upa.entity_name}</p>
+                                <p className="text-sm text-muted-foreground">{upa.address}</p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    {upa.entity_type} • {upa.intents?.length || 0} payment types
+                                </p>
+                            </button>
+                        ))}
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             <div>
-                <h2 className="text-2xl font-semibold">Officer Portal</h2>
+                <h2 className="text-2xl font-semibold">Gov Office Portal</h2>
                 <p className="text-sm text-muted-foreground">
                     {selectedUpa?.entity_name || "Government Payment Collection"}
                 </p>
@@ -289,8 +406,49 @@ function OfficerPage() {
                                     </div>
                                 </div>
                             )}
-                            <Button className="w-full" onClick={handleGenerateQR}>
-                                <QrCode className="h-4 w-4 mr-2" /> Generate QR Code
+                            {/* Offline Mode Toggle */}
+                            <div className="rounded-lg border p-3 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        {isOfflineMode ? (
+                                            <Lock className="h-4 w-4 text-warning" />
+                                        ) : (
+                                            <Wifi className="h-4 w-4 text-success" />
+                                        )}
+                                        <span className="text-sm font-medium">
+                                            {isOfflineMode ? "Offline Mode — Signed QR" : "Online Mode — Standard QR"}
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={isOfflineMode}
+                                        onClick={() => setIsOfflineMode(!isOfflineMode)}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                            isOfflineMode ? "bg-warning" : "bg-muted"
+                                        }`}
+                                    >
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                            isOfflineMode ? "translate-x-6" : "translate-x-1"
+                                        }`} />
+                                    </button>
+                                </div>
+                                {isOfflineMode && (
+                                    <p className="text-xs text-muted-foreground">
+                                        QR will be cryptographically signed with Ed25519. Citizens can verify offline without any server.
+                                    </p>
+                                )}
+                            </div>
+
+                            <Button className="w-full" onClick={handleGenerateQR} disabled={signing}>
+                                {signing ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : isOfflineMode ? (
+                                    <ShieldCheck className="h-4 w-4 mr-2" />
+                                ) : (
+                                    <QrCode className="h-4 w-4 mr-2" />
+                                )}
+                                {signing ? "Signing..." : isOfflineMode ? "Generate Signed QR" : "Generate QR Code"}
                             </Button>
                         </CardContent>
                     </Card>
@@ -304,6 +462,12 @@ function OfficerPage() {
                                     <div id="qr-canvas" className="flex flex-col items-center p-6 bg-white rounded-lg border">
                                         <QRCodeDisplay value={qrData} size={260} onRendered={handleQRRendered} />
                                         <div className="mt-4 text-center">
+                                            {qrData && JSON.parse(qrData).signed && (
+                                                <div className="inline-flex items-center gap-1.5 bg-warning/10 text-warning text-xs font-medium px-3 py-1 rounded-full mb-2">
+                                                    <ShieldCheck className="h-3.5 w-3.5" />
+                                                    Ed25519 Signed — Offline Ready
+                                                </div>
+                                            )}
                                             <p className="font-semibold text-foreground">{selectedUpa?.entity_name}</p>
                                             <p className="text-sm text-muted-foreground">{selectedIntent?.label}</p>
                                             {selectedIntent?.amount_type === "fixed" && (
@@ -315,7 +479,7 @@ function OfficerPage() {
                                     {uploading && !qrImageUrl && <p className="text-xs text-muted-foreground text-center">Saving to cloud...</p>}
                                     {qrImageUrl && (
                                         <div className="text-center space-y-1">
-                                            <p className="text-xs text-success">✓ Stored in cloud</p>
+                                            <p className="text-xs text-success flex items-center justify-center gap-1"><CheckCircle2 className="h-3 w-3" /> Stored in cloud</p>
                                             <a href={qrImageUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary underline break-all">Open QR Image</a>
                                         </div>
                                     )}
@@ -328,6 +492,26 @@ function OfficerPage() {
                                             {copied ? "Copied!" : "Copy"}
                                         </Button>
                                     </div>
+                                </div>
+                            ) : qrImageUrl ? (
+                                <div className="space-y-4">
+                                    <div className="flex flex-col items-center p-6 bg-white rounded-lg border">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={qrImageUrl} alt="Stored QR Code" className="w-[260px] h-[260px]" />
+                                        <div className="mt-4 text-center">
+                                            <p className="font-semibold text-foreground">{selectedUpa?.entity_name}</p>
+                                            <p className="text-sm text-muted-foreground">{selectedIntent?.label}</p>
+                                            {selectedIntent?.amount_type === "fixed" && (
+                                                <p className="text-lg font-bold text-foreground mt-1">NPR {selectedIntent.fixed_amount?.toLocaleString()}</p>
+                                            )}
+                                            <p className="text-xs text-muted-foreground mt-2 font-mono">{selectedUpa?.address}</p>
+                                        </div>
+                                    </div>
+                                    <div className="text-center space-y-1">
+                                        <p className="text-xs text-success flex items-center justify-center gap-1"><CheckCircle2 className="h-3 w-3" /> Previously stored in cloud</p>
+                                        <a href={qrImageUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary underline break-all">Open QR Image</a>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground text-center">Click &quot;Generate&quot; to create a fresh QR</p>
                                 </div>
                             ) : (
                                 <div className="flex flex-col items-center justify-center h-64 text-muted-foreground gap-2">

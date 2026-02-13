@@ -13,6 +13,64 @@ export interface AppUser {
   phone?: string;
   citizenship_id?: string;
   upa_id?: string;
+  nidNumber?: string;        // Linked National ID
+}
+
+// === National ID (NID) Types ===
+export interface NIDCard {
+  nidNumber: string;           // "RAM-KTM-1990-4521"
+  fullName: string;            // "Ram Bahadur Thapa"
+  dateOfBirth: string;         // "1990-05-15"
+  issueDate: string;
+  expiryDate: string;
+  photoUrl: string;            // Mock photo URL
+  district: string;            // "Kathmandu"
+  isActive: boolean;
+  linkedUPA: string | null;    // "ram@upa.np"
+  linkedBanks: BankAccount[];
+}
+
+// === Bank Account Types ===
+export interface BankAccount {
+  id: string;
+  bankName: string;            // "Nepal Bank"
+  accountNumber: string;       // Masked: "****2341"
+  accountType: "savings" | "current";
+  isPrimary: boolean;
+  linkedVia: "nid";
+}
+
+// === Offline Spending Limit ===
+export interface OfflineLimit {
+  maxAmount: number;           // e.g., 5000 NPR
+  currentUsed: number;         // Sum of queued offline payments
+  lastReset: number;           // timestamp
+}
+
+// === C2C (Citizen-to-Citizen) Transaction ===
+export interface C2CPayment {
+  fromUPA: string;             // "ram@upa.np"
+  toUPA: string;               // "sita@upa.np"
+  amount: number;
+  intent: string;              // "Lunch split" | "Movie tickets" | "Rent"
+  message?: string;            // Optional note
+  category: "personal";
+}
+
+// === Bill Payment Types ===
+export interface BillPayment {
+  billerUPA: string;           // "nea@utility.np"
+  billerName: string;          // "Nepal Electricity Authority"
+  billType: "electricity" | "water" | "internet" | "mobile" | "rent" | "school";
+  accountNumber: string;       // Customer's utility account
+  billingPeriod: string;       // "February 2026"
+  dueDate: string;
+  amount: number;
+  consumption?: {
+    units?: number;
+    previousReading?: number;
+    currentReading?: number;
+  };
 }
 
 // === Merchant Profile (citizen → merchant registration) ===
@@ -48,6 +106,13 @@ export interface StaticQRPayload {
   max_amount?: number;      // if range
   currency: "NPR";
   metadata_schema: Record<string, { type: string; label: string; required: boolean }>;
+  // Offline signing fields (present when officer generates signed QR)
+  signature?: string;
+  publicKey?: string;
+  signed?: boolean;
+  nonce?: string;
+  issuedAt?: string;
+  expiresAt?: string;
 }
 
 // Full transaction payload — built at payment time by the citizen app
@@ -92,7 +157,9 @@ export interface UPA {
   id: string;
   address: string;
   entity_name: string;
-  entity_type: "government" | "institution" | "merchant";
+  entity_type: "government" | "institution" | "merchant" | "citizen" | "utility";
+  business_category?: string;
+  nid_number?: string;
   public_key: string | null;
   intents: IntentTemplate[];
 }
@@ -117,17 +184,24 @@ export interface MetadataField {
 
 // === Transaction Types ===
 
+export type TransactionType = "payment" | "c2c" | "nid_payment" | "bill_payment" | "merchant_purchase";
+export type PaymentSource = "wallet" | "nid_bank" | "bank_gateway" | "esewa" | "khalti";
+
 export interface Transaction {
   id: string;
   tx_id?: string;
+  tx_type?: TransactionType;
   recipient: string;
   recipientName?: string;
+  fromUPA?: string;          // For C2C — sender's UPA
   amount: number;
   intent: string;
   intentCategory?: string;
   metadata?: Record<string, string>;
   status: "pending" | "settled" | "failed" | "queued" | "syncing";
-  mode: "online" | "offline";
+  mode: "online" | "offline" | "nfc";
+  payment_source?: PaymentSource;
+  bank_name?: string;
   signature?: string;
   publicKey?: string;
   nonce?: string;
@@ -135,6 +209,7 @@ export interface Transaction {
   settledAt?: number;
   syncedAt?: number;
   walletProvider?: string;
+  message?: string;          // C2C message
 }
 
 // === Wallet Types ===
@@ -160,12 +235,17 @@ export interface SupabaseTransaction {
   id: string;
   tx_id: string;
   upa_id: string;
-  intent_id: string;
+  intent_id: string | null;
+  tx_type: string;
   amount: number;
   currency: string;
   payer_name: string | null;
   payer_id: string | null;
+  payer_upa: string | null;
+  receiver_upa: string | null;
   wallet_provider: string;
+  payment_source: string;
+  bank_account_id: string | null;
   status: string;
   mode: string;
   metadata: Record<string, string>;
@@ -176,6 +256,83 @@ export interface SupabaseTransaction {
   synced_at: string | null;
   created_at: string;
   upas?: { address: string; entity_name: string };
-  intents?: { intent_code: string; label: string; category: string };
+  intents?: { intent_code: string; label: string; category: string } | null;
 }
+
+// === Quick C2C Intent Presets ===
+export const C2C_INTENTS = [
+  "Lunch split",
+  "Movie tickets",
+  "Taxi fare",
+  "Gift",
+  "Rent payment",
+  "Grocery share",
+  "Party contribution",
+  "Loan repayment",
+  "School supplies",
+  "Coffee",
+] as const;
+
+// === Bill Payment Presets ===
+export const BILL_TYPES = [
+  { id: "electricity", label: "⚡ Electricity", billerUPA: "nea@utility.np", billerName: "Nepal Electricity Authority" },
+  { id: "water", label: "💧 Water", billerUPA: "water@kathmandu.gov.np", billerName: "Kathmandu Water Supply" },
+  { id: "internet", label: "🌐 Internet", billerUPA: "internet@worldlink.np", billerName: "Worldlink Communications" },
+  { id: "mobile", label: "📱 Mobile Recharge", billerUPA: "recharge@ntc.np", billerName: "Nepal Telecom" },
+] as const;
+
+// === Mock NID Database ===
+export const MOCK_NID_DATABASE: NIDCard[] = [
+  {
+    nidNumber: "RAM-KTM-1990-4521",
+    fullName: "Ram Bahadur Thapa",
+    dateOfBirth: "1990-05-15",
+    issueDate: "2020-01-01",
+    expiryDate: "2030-01-01",
+    photoUrl: "/mock-nid/ram.jpg",
+    district: "Kathmandu",
+    isActive: true,
+    linkedUPA: "ram@upa.np",
+    linkedBanks: [
+      { id: "bank_1", bankName: "Nepal Bank", accountNumber: "****0123", accountType: "savings", isPrimary: true, linkedVia: "nid" },
+    ],
+  },
+  {
+    nidNumber: "SITA-PKR-1995-7832",
+    fullName: "Sita Sharma",
+    dateOfBirth: "1995-08-22",
+    issueDate: "2021-03-15",
+    expiryDate: "2031-03-15",
+    photoUrl: "/mock-nid/sita.jpg",
+    district: "Pokhara",
+    isActive: true,
+    linkedUPA: "sita@upa.np",
+    linkedBanks: [
+      { id: "bank_2", bankName: "Nabil Bank", accountNumber: "****9876", accountType: "savings", isPrimary: true, linkedVia: "nid" },
+    ],
+  },
+  {
+    nidNumber: "HARI-LTP-1988-3214",
+    fullName: "Hari Prasad Gurung",
+    dateOfBirth: "1988-12-10",
+    issueDate: "2019-06-20",
+    expiryDate: "2029-06-20",
+    photoUrl: "/mock-nid/hari.jpg",
+    district: "Lalitpur",
+    isActive: true,
+    linkedUPA: "hari@upa.np",
+    linkedBanks: [
+      { id: "bank_3", bankName: "NIC Asia Bank", accountNumber: "****6677", accountType: "savings", isPrimary: true, linkedVia: "nid" },
+    ],
+  },
+];
+
+// === Mock Bank List ===
+export const SUPPORTED_BANKS = [
+  "Nepal Bank",
+  "Nabil Bank",
+  "NIC Asia Bank",
+  "Himalayan Bank",
+  "Standard Chartered Bank Nepal",
+] as const;
 

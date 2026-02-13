@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const status = searchParams.get("status");
   const intent = searchParams.get("intent");
+  const upaId = searchParams.get("upa_id");
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "100");
 
@@ -51,6 +52,9 @@ export async function GET(request: NextRequest) {
       }
       if (intent) {
         query = query.eq("intents.intent_code", intent);
+      }
+      if (upaId) {
+        query = query.ilike("upas.address", `%${upaId}%`);
       }
 
       const { data, error, count } = await query;
@@ -75,6 +79,12 @@ export async function GET(request: NextRequest) {
     const txData = localTx.length > 0 ? localTx : FALLBACK_TRANSACTIONS;
     const filtered = txData.filter((tx) => {
       if (status && status !== "all" && tx.status !== status) return false;
+      if (upaId) {
+        const q = upaId.toLowerCase();
+        const matchRecipient = tx.recipient?.toLowerCase().includes(q);
+        const matchName = (tx as any).recipientName?.toLowerCase().includes(q);
+        if (!matchRecipient && !matchName) return false;
+      }
       return true;
     });
 
