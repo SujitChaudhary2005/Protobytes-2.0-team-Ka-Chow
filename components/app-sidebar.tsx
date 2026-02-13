@@ -193,7 +193,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SidebarMenu>
                     <SidebarMenuItem>
                         <div className="flex items-center gap-2 px-2 py-1.5">
-                            <NetworkStatus />
                         </div>
                     </SidebarMenuItem>
                 </SidebarMenu>

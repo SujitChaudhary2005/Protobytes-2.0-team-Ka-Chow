@@ -60,7 +60,6 @@ import {
     BarChart3,
     DollarSign,
 } from "lucide-react";
-import { OfflineToggle } from "@/components/offline-toggle";
 import { useNetwork } from "@/hooks/use-network";
 
 export function CitizenHome() {
@@ -254,10 +253,9 @@ export function CitizenHome() {
 
     return (
         <div className="p-4 md:p-6 space-y-5">
-            {/* Network Toggle */}
+            {/* Header */}
             <div className="flex items-center justify-between">
                 <h2 className="text-lg font-bold">Dashboard</h2>
-                <OfflineToggle />
             </div>
 
             {/* Balance Card */}

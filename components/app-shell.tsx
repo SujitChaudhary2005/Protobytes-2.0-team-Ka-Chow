@@ -47,7 +47,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </main>
             </SidebarInset>
             <BottomNav />
-            <NetworkStatusBadge />
         </SidebarProvider>
     );
 }

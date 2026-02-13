@@ -604,6 +604,8 @@ export function CitizenOfflinePay() {
             const merchantPubKey = await keyToHex(merchantKeys.publicKey);
 
             // 2. Create a fake request payload
+            const amounts = [150, 250, 350, 450, 200, 300, 100];
+            const randomAmount = amounts[Math.floor(Math.random() * amounts.length)];
             const requestPayload = {
                 protocol: "upa-offline-xdevice",
                 version: "1.0",
@@ -611,7 +613,7 @@ export function CitizenOfflinePay() {
                 merchantUPA: "merchant@upa.np",
                 merchantName: "Local Merchant Store",
                 merchantPubKey: merchantPubKey,
-                amount: 500,
+                amount: randomAmount,
                 currency: "NPR",
                 intent: "Purchase",
                 nonce: generateNonce(),
@@ -882,7 +884,7 @@ export function CitizenOfflinePay() {
                                 onClick={handleSimulateScan}
                             >
                                 <Zap className="h-4 w-4 mr-2" />
-                                🎯 Quick Pay - Instant Payment (NPR 500)
+                                Quick Pay - Instant Payment
                             </Button>
                             <p className="text-[10px] text-center text-muted-foreground mt-2">
                                 Complete an instant payment without scanning

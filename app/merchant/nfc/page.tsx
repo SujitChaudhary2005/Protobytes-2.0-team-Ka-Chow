@@ -633,7 +633,6 @@ function MerchantNFCTerminal() {
                     </p>
                 </div>
                 <div className="flex items-center gap-1.5">
-                    <OfflineToggle className="h-7 text-[10px] px-2" />
                     <Badge variant={hasNativeNFC ? "default" : "secondary"} className="text-[10px]">
                         {hasNativeNFC ? "NFC" : "BC"}
                     </Badge>

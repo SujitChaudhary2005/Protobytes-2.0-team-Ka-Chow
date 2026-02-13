@@ -858,7 +858,6 @@ function PayPage() {
                             Unverified
                         </Badge>
                     )}
-                    <OfflineToggle className="h-7 text-[10px] px-2" />
                 </div>
             </div>
 
