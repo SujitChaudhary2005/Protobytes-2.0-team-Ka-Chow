@@ -37,12 +37,13 @@ export async function GET(request: NextRequest) {
 
   try {
     if (isSupabaseConfigured()) {
+      // Use left joins so transactions still appear even if UPA/intent is missing
       let query = supabase
         .from("transactions")
         .select(`
           *,
-          upas!inner (address, entity_name),
-          intents!inner (intent_code, label, category)
+          upas (address, entity_name),
+          intents (intent_code, label, category)
         `, { count: "exact" })
         .order("created_at", { ascending: false })
         .range((page - 1) * limit, page * limit - 1);

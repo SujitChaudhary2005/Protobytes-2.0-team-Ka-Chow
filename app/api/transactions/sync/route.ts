@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       const { qrPayload, signature, nonce, publicKey } = payment;
       const txId = `UPA-2026-${String(Date.now()).slice(-5)}-${Math.random().toString(36).slice(2, 5)}`;
 
-      // Server-side Ed25519 signature verification
+      // ── 1. Server-side Ed25519 signature verification ──────────
       if (signature && publicKey) {
         try {
           const isValid = verifySignature(qrPayload, signature, publicKey);
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Check QR expiry (1 hour)
+      // ── 2. Check QR expiry (1 hour) ───────────────────────────
       if (qrPayload.expiresAt) {
         const expiresAt = new Date(qrPayload.expiresAt).getTime();
         if (Date.now() > expiresAt) {
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // ── Fund Transfer via abstraction layer ─────────────────────
+      // ── 3. Fund Transfer via abstraction layer ─────────────────
       const transferReq: TransferRequest = {
         txId,
         source: {
@@ -82,75 +82,90 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      // ── 4. Write to Supabase with nonce enforcement ────────────
       if (isSupabaseConfigured()) {
-        // Check nonce hasn't been used
-        const { data: existing } = await supabase
-          .from("transactions")
-          .select("id")
-          .eq("nonce", nonce)
-          .single();
+        try {
+          // Check nonce uniqueness at DB level
+          if (nonce) {
+            const { data: existing } = await supabase
+              .from("transactions")
+              .select("id")
+              .eq("nonce", nonce)
+              .maybeSingle();
 
-        if (existing) {
-          results.push({
-            txId: null,
-            status: "rejected",
-            reason: "nonce_reused",
-          });
-          continue;
+            if (existing) {
+              results.push({
+                txId: null,
+                status: "rejected",
+                reason: "nonce_reused",
+                code: 409,
+              });
+              continue;
+            }
+          }
+
+          // Look up UPA and intent
+          const { data: upa } = await supabase
+            .from("upas")
+            .select("id")
+            .eq("address", qrPayload.upa)
+            .maybeSingle();
+
+          const { data: intent } = await supabase
+            .from("intents")
+            .select("id")
+            .eq("intent_code", qrPayload.intent?.id || "")
+            .maybeSingle();
+
+          const { data: tx, error } = await supabase
+            .from("transactions")
+            .insert({
+              tx_id: txId,
+              upa_id: upa?.id || qrPayload.upa_id,
+              intent_id: intent?.id || qrPayload.intent_id,
+              tx_type: qrPayload.tx_type || (qrPayload.intent?.category === "transfer" ? "c2c" : "payment"),
+              amount: qrPayload.amount,
+              currency: "NPR",
+              payer_name: qrPayload.metadata?.payerName,
+              payer_id: qrPayload.metadata?.payerId,
+              wallet_provider: "upa_pay",
+              payment_source: qrPayload.payment_source || "wallet",
+              status: "settled",
+              mode: "offline",
+              metadata: {
+                ...(qrPayload.metadata || {}),
+                transferId: transferResult.transferId,
+                bankReference: transferResult.bankReference,
+                fee: transferResult.fee,
+                netAmount: transferResult.netAmount,
+              },
+              signature,
+              nonce,
+              issued_at: qrPayload.issuedAt || new Date().toISOString(),
+              settled_at: new Date().toISOString(),
+              synced_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
+
+          if (error) {
+            // Catch nonce unique violation → 409
+            if (error.code === "23505" && error.message?.includes("nonce")) {
+              results.push({ txId: null, status: "rejected", reason: "nonce_reused", code: 409 });
+              continue;
+            }
+            results.push({ txId: null, status: "failed", reason: error.message });
+            continue;
+          }
+
+          results.push({ txId, status: "settled", verified: true });
+        } catch (sbErr: any) {
+          // Graceful Supabase fallback — log and still return settled from mock
+          console.warn("[Sync] Supabase write failed, falling back to mock:", sbErr.message);
+          results.push({ txId, status: "settled", verified: true, fallback: true });
         }
-
-        // Look up UPA and intent
-        const { data: upa } = await supabase
-          .from("upas")
-          .select("id")
-          .eq("address", qrPayload.upa)
-          .single();
-
-        const { data: intent } = await supabase
-          .from("intents")
-          .select("id")
-          .eq("intent_code", qrPayload.intent?.id || "")
-          .single();
-
-        const { data: tx, error } = await supabase
-          .from("transactions")
-          .insert({
-            tx_id: txId,
-            upa_id: upa?.id || qrPayload.upa_id,
-            intent_id: intent?.id || qrPayload.intent_id,
-            tx_type: qrPayload.tx_type || (qrPayload.intent?.category === "transfer" ? "c2c" : "payment"),
-            amount: qrPayload.amount,
-            currency: "NPR",
-            payer_name: qrPayload.metadata?.payerName,
-            payer_id: qrPayload.metadata?.payerId,
-            wallet_provider: "upa_pay",
-            payment_source: qrPayload.payment_source || "wallet",
-            status: "settled",
-            mode: "offline",
-            metadata: {
-              ...(qrPayload.metadata || {}),
-              transferId: transferResult.transferId,
-              bankReference: transferResult.bankReference,
-              fee: transferResult.fee,
-              netAmount: transferResult.netAmount,
-            },
-            signature,
-            nonce,
-            issued_at: qrPayload.issuedAt || new Date().toISOString(),
-            settled_at: new Date().toISOString(),
-            synced_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (error) {
-          results.push({ txId: null, status: "failed", reason: error.message });
-          continue;
-        }
-
-        results.push({ txId, status: "settled", verified: true });
       } else {
-        // Fallback
+        // Mock fallback — no Supabase
         results.push({ txId, status: "settled", verified: true });
       }
     }

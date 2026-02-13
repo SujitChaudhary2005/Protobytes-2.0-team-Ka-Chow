@@ -62,17 +62,17 @@ export async function POST(request: NextRequest) {
     // Try Supabase
     if (isSupabaseConfigured()) {
       try {
-        // Check nonce uniqueness
+        // Check nonce uniqueness at DB level
         const { data: existingNonce } = await supabase
           .from("transactions")
           .select("id")
           .eq("nonce", nonce)
-          .single();
+          .maybeSingle();
 
         if (existingNonce) {
           return NextResponse.json(
             { success: false, error: "Replay detected: nonce already used" },
-            { status: 400 }
+            { status: 409 }
           );
         }
 
@@ -81,13 +81,13 @@ export async function POST(request: NextRequest) {
           .from("upas")
           .select("id")
           .eq("address", fromUPA)
-          .single();
+          .maybeSingle();
 
         const { data: toUpaData } = await supabase
           .from("upas")
           .select("id")
           .eq("address", toUPA)
-          .single();
+          .maybeSingle();
 
         if (fromUpaData && toUpaData) {
           const { error } = await supabase.from("transactions").insert({
@@ -119,27 +119,36 @@ export async function POST(request: NextRequest) {
             settled_at: now,
           });
 
-          if (!error) {
-            return NextResponse.json({
-              success: true,
-              transaction: {
-                txId,
-                type: "c2c",
-                fromUPA,
-                toUPA,
-                amount,
-                intent,
-                message,
-                status: "settled",
-                settledAt: now,
-                transferId: transferResult.transferId,
-                fee: transferResult.fee,
-              },
-            });
+          if (error) {
+            // Catch nonce unique violation → 409
+            if (error.code === "23505" && error.message?.includes("nonce")) {
+              return NextResponse.json(
+                { success: false, error: "Replay detected: nonce already used" },
+                { status: 409 }
+              );
+            }
+            throw error;
           }
+
+          return NextResponse.json({
+            success: true,
+            transaction: {
+              txId,
+              type: "c2c",
+              fromUPA,
+              toUPA,
+              amount,
+              intent,
+              message,
+              status: "settled",
+              settledAt: now,
+              transferId: transferResult.transferId,
+              fee: transferResult.fee,
+            },
+          });
         }
-      } catch (e) {
-        console.error("[C2C API] Supabase error:", e);
+      } catch (e: any) {
+        console.warn("[C2C API] Supabase error, falling back to mock:", e.message);
       }
     }
 

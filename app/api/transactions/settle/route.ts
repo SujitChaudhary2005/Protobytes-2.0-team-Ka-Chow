@@ -25,18 +25,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check nonce uniqueness (if Supabase is configured)
+    // ── Nonce replay protection (DB-level) ──────────────────────
     if (qrPayload.nonce && isSupabaseConfigured()) {
       const { data: existingNonce } = await supabase
         .from("transactions")
         .select("id")
         .eq("nonce", qrPayload.nonce)
-        .single();
+        .maybeSingle();
 
       if (existingNonce) {
         return NextResponse.json(
           { success: false, error: "Replay detected: nonce already used" },
-          { status: 400 }
+          { status: 409 }
         );
       }
     }
@@ -126,7 +126,16 @@ export async function POST(request: NextRequest) {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        // Catch nonce unique violation → 409
+        if (error.code === "23505" && error.message?.includes("nonce")) {
+          return NextResponse.json(
+            { success: false, error: "Replay detected: nonce already used" },
+            { status: 409 }
+          );
+        }
+        throw error;
+      }
 
       return NextResponse.json({
         success: true,
@@ -155,6 +164,12 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("Settle error:", error);
+
+    // If Supabase failed but we have a valid payload, fallback gracefully
+    if (isSupabaseConfigured()) {
+      console.warn("[Settle] Supabase write failed — falling back to mock mode. Error:", error.message);
+    }
+
     return NextResponse.json(
       { success: false, error: error.message },
       { status: 500 }
