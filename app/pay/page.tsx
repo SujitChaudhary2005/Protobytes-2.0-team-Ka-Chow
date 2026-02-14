@@ -51,7 +51,6 @@ import { saveTransaction as saveLocalTransaction } from "@/lib/storage";
 import { queueTransaction } from "@/lib/db";
 import { executeACIDTransaction } from "@/lib/acid-transaction";
 import { createSignalChannel } from "@/lib/nfc-signal";
-import { OfflineToggle } from "@/components/offline-toggle";
 import type { UPA } from "@/types";
 
 type PaymentMode = "qr" | "nfc";

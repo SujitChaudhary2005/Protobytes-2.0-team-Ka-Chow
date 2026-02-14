@@ -30,8 +30,6 @@ import {
     SidebarMenuItem,
     SidebarRail,
 } from "@/components/ui/sidebar";
-import { NetworkStatus } from "@/components/network-status";
-import { OfflineToggle } from "@/components/offline-toggle";
 import { useWallet } from "@/contexts/wallet-context";
 import type { UserRole } from "@/types";
 

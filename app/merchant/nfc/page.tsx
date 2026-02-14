@@ -38,7 +38,6 @@ import { MerchantOfflineCharge } from "@/components/cross-device-offline";
 import { QRCodeDisplay } from "@/components/qr-code";
 import { QrCode } from "lucide-react";
 import { useMemo } from "react";
-import { OfflineToggle } from "@/components/offline-toggle";
 
 type TerminalStatus = "ready" | "detecting" | "processing" | "success";
 type BizTxMode = "charge" | "b2c" | "b2g" | "xdevice";

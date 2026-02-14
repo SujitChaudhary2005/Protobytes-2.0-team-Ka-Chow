@@ -604,8 +604,6 @@ export function CitizenOfflinePay() {
             const merchantPubKey = await keyToHex(merchantKeys.publicKey);
 
             // 2. Create a fake request payload
-            const amounts = [150, 250, 350, 450, 200, 300, 100];
-            const randomAmount = amounts[Math.floor(Math.random() * amounts.length)];
             const requestPayload = {
                 protocol: "upa-offline-xdevice",
                 version: "1.0",
@@ -613,7 +611,7 @@ export function CitizenOfflinePay() {
                 merchantUPA: "merchant@upa.np",
                 merchantName: "Local Merchant Store",
                 merchantPubKey: merchantPubKey,
-                amount: randomAmount,
+                amount: 500,
                 currency: "NPR",
                 intent: "Purchase",
                 nonce: generateNonce(),
